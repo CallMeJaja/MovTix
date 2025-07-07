@@ -1,3 +1,4 @@
+#include "conio.h"
 #include "limits"
 #include <cstdlib>
 #include <cstring>
@@ -104,14 +105,31 @@ bool isValidEmail(const char *email) {
 }
 
 void clearInputBuffer() {
+    while (kbhit()) {
+        getch();
+    }
     cin.clear();
     cin.ignore(numeric_limits<streamsize>::max(), '\n');
 }
 
 void pauseScreen() {
     cout << "\nTekan Enter untuk melanjutkan...";
-    clearInputBuffer();
-    cin.get();
+
+    // Bersihkan buffer dulu
+    while (kbhit()) {
+        getch();
+    }
+
+    // Tunggu tekanan Enter
+    while (true) {
+        if (kbhit()) {
+            char ch = getch();
+            if (ch == '\r' || ch == '\n') {
+                cout << endl;
+                break;
+            }
+        }
+    }
 }
 
 // Fungsi untuk login
@@ -161,8 +179,7 @@ bool registerUser() {
     char confirmPassword[50];
 
     cout << "\nNama Lengkap      : ";
-    cin.ignore();
-    cin.getline(nama, 100);
+    cin >> nama;
 
     cout << "Username          : ";
     cin >> username;
@@ -225,6 +242,11 @@ bool resetPassword() {
     showHeader("RESET PASSWORD");
 
     char usernameOrEmail[100];
+    char correctCode[] = "123456";
+    char inputCode[10];
+    char newPassword[50];
+    char confirmPassword[50];
+
     cout << "\nMasukkan username/email Anda : ";
     cin >> usernameOrEmail;
 
@@ -242,10 +264,6 @@ bool resetPassword() {
     // Simulasi pengiriman kode verifikasi
     cout << "\n[Kode verifikasi telah dikirim ke email Anda.]" << endl;
 
-    // Kode verifikasi sederhana (dalam implementasi nyata, ini harus random)
-    char correctCode[] = "123456";
-    char inputCode[10];
-
     cout << "Masukkan kode verifikasi    : ";
     cin >> inputCode;
 
@@ -254,9 +272,6 @@ bool resetPassword() {
         pauseScreen();
         return false;
     }
-
-    char newPassword[50];
-    char confirmPassword[50];
 
     cout << "Masukkan password baru      : ";
     cin >> newPassword;
@@ -653,8 +668,6 @@ void showMovieDetail(int movieIndex) {
             cout << "  Tanggal: " << movie.reviews[i].date << endl << endl;
         }
     }
-
-    cout << "\n[Tekan Enter untuk kembali...]";
     pauseScreen();
 }
 
@@ -670,19 +683,38 @@ void showSortMenu() {
     cout << "\nPilihan Anda [0-4]: ";
 }
 
+char getSingleInput() {
+    char input;
+    while (true) {
+        if (kbhit()) {
+            input = getch();
+            cout << input << endl;
+            return input;
+        }
+    }
+}
+
+int getSingletDigit() {
+    char input = getSingleInput();
+    if (input >= '0' && input <= '9') {
+        return input - '0';
+    } else {
+        return -1; // Invalid input
+    }
+}
+
 // Fungsi untuk menangani menu daftar film
 void handleMovieListMenu() {
-    char input[10];
-    int choice;
+    char input;
 
     while (true) {
         showMovieList();
-        cin >> input;
+        input = getSingleInput();
 
         // Cek apakah input adalah 'S' untuk sorting
-        if (input[0] == 'S' || input[0] == 's') {
+        if (input == 'S' || input == 's') {
             showSortMenu();
-            cin >> choice;
+            int choice = getSingletDigit();
 
             switch (choice) {
             case 1:
@@ -714,13 +746,12 @@ void handleMovieListMenu() {
             case 0:
                 break;
             default:
-                cout << "\nPilihan tidak valid!" << endl;
+                cout << "\nPilihan tidak valid! Silahkan pilih 0-4" << endl;
                 pauseScreen();
                 break;
             }
-        } else {
-            // Konversi input ke integer
-            choice = atoi(input);
+        } else if (input >= '0' && input <= '9') {
+            int choice = input - '0';
 
             if (choice == 0) {
                 break; // Kembali ke menu utama
@@ -732,6 +763,10 @@ void handleMovieListMenu() {
                      << endl;
                 pauseScreen();
             }
+        } else {
+            cout << "\nInput tidak valid! Gunakan S untuk sorting, 0-"
+                 << movieCount << " untuk memilih film." << endl;
+            pauseScreen();
         }
     }
 }
@@ -790,7 +825,12 @@ int main() {
     while (true) {
         if (!isLoggedIn) {
             showAuthMenu();
-            cin >> choice;
+            choice = getSingletDigit();
+
+            if (choice == -1) {
+                cout << "\nPilihan tidak valid. Silakan pilih 1-4." << endl;
+                continue;
+            }
 
             switch (choice) {
             case 1:
@@ -814,7 +854,13 @@ int main() {
             }
         } else {
             showMainMenu();
-            cin >> choice;
+            choice = getSingletDigit();
+
+            if (choice == -1) {
+                cout << "\nPilihan tidak valid. Silakan pilih 1-6." << endl;
+                pauseScreen();
+                continue;
+            }
 
             switch (choice) {
             case 1:
