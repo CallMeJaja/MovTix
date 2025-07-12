@@ -2866,7 +2866,7 @@ int main() {
                 currentUserIndex = -1;
                 break;
             default:
-                cout << "\nPilihan tidak valid. Silakan pilih 1-6." << endl;
+                cout << "\nPilihan tidak valid. Silakan pilih 1 - 6." << endl;
                 pauseScreen();
                 break;
             }
