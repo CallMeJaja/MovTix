@@ -25,10 +25,11 @@ enum PaymentMethod {
 };
 
 enum TransactionStatus {
-    PENDING_PAYMENT, // Menunggu Pembayaran
-    PAID,            // Sudah Dibayar
-    EXPIRED,         // Transaksi Kadaluarsa
-    CANCELLED        // Transaksi Dibatalkan
+    PENDING_PAYMENT = 0, // Menunggu Pembayaran
+    PAID = 1,            // Sudah Dibayar
+    EXPIRED = 2,         // Transaksi Kadaluarsa
+    CANCELLED = 3,
+    USED = 4 // Transaksi Dibatalkan
 };
 
 struct Seat {
@@ -157,6 +158,7 @@ void getCurrentTime(char *timeStr);
 char getSingleInput();
 int getSingletDigit();
 int getNumberInput();
+const char *getStatusString(TransactionStatus status);
 void processPayment(int transactionId);
 void cancelReservation(int transactionId);
 void generationBookingCode(char *bookingCode);
@@ -166,6 +168,10 @@ bool validateCard(const char *cardNumber, const char *expiry, const char *cvv);
 bool processCardPayment(int totalAmount, PaymentInfo *paymentInfo);
 bool processBankPayment(int totalAmount, PaymentInfo *paymentInfo);
 bool processPointsPayment(int totalAmount, PaymentInfo *paymentInfo);
+void processTicketExchange(int transactionIndex);
+int findTransactionByCode(const char *bookingCode, const char *passkey);
+bool validateBookingCode(const char *code);
+bool validatePasskey(const char *passkey);
 
 //============================================================
 // FUNCTION DEFINITIONS
@@ -867,6 +873,111 @@ bool validateCard(const char *cardNumber, const char *expiry, const char *cvv) {
     cout << "\nValidasi berhasil! Kartu berlaku sampai " << expiry << endl;
 
     return true;
+}
+
+// Fungsi untuk mencari transaksi berdasarkan booking code dan passkey
+int findTransactionByCode(const char *bookingCode, const char *passkey) {
+    for (int i = 0; i < transactionCount; i++) {
+        if (transactions[i].status == PAID &&
+            strcmp(transactions[i].bookingCode, bookingCode) == 0 &&
+            strcmp(transactions[i].passkey, passkey) == 0) {
+            return i;
+        }
+    }
+    return -1; // Tidak ditemukan
+}
+
+// Fungsi untuk validasi input kode booking
+bool validateBookingCode(const char *code) {
+    // Kode booking harus 8 karakter, huruf kapital dan angka
+    if (strlen(code) != 8) {
+        return false;
+    }
+
+    for (int i = 0; i < 8; i++) {
+        if (!isalnum(code[i]) || islower(code[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Fungsi untuk validasi input passkey
+bool validatePasskey(const char *passkey) {
+    // Passkey harus 6 digit angka
+    if (strlen(passkey) != 6) {
+        return false;
+    }
+
+    for (int i = 0; i < 6; i++) {
+        if (!isdigit(passkey[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Fungsi utama untuk penukaran tiket dan F&B
+void handleTicketExchange() {
+    char bookingCode[15];
+    char passkey[15];
+
+    while (true) {
+        clearScreen();
+        showHeader("PENUKARAN TIKET & F&B");
+
+        // Input kode booking
+        cout << "\nMasukkan kode booking (8 karakter): ";
+        cin >> bookingCode;
+
+        // Validasi format kode booking
+        if (!validateBookingCode(bookingCode)) {
+            cout << "\nFormat kode booking tidak valid!" << endl;
+            cout << "Kode booking harus 8 karakter (huruf kapital dan angka)"
+                 << endl;
+            cout << "Contoh: ZXH0DA1Y" << endl;
+            pauseScreen();
+            continue;
+        }
+
+        // Input passkey
+        cout << "Masukkan passkey (6 digit): ";
+        cin >> passkey;
+
+        // Validasi format passkey
+        if (!validatePasskey(passkey)) {
+            cout << "\nFormat passkey tidak valid!" << endl;
+            cout << "Passkey harus 6 digit angka" << endl;
+            cout << "Contoh: 123456" << endl;
+            pauseScreen();
+            continue;
+        }
+
+        // Cari transaksi berdasarkan kode
+        int transactionIndex = findTransactionByCode(bookingCode, passkey);
+
+        if (transactionIndex != -1) {
+            // Jika valid
+            transactions[transactionIndex].status = USED;
+
+            cout << "\n[Penukaran tiket & F&B berhasil! Selamat menonton.]"
+                 << endl;
+            pauseScreen();
+            return;
+
+        } else {
+            // Jika tidak valid
+            cout << "\n[Kode booking atau passkey salah / sudah digunakan.]"
+                 << endl;
+
+            cout << "\nCoba lagi? (Y/N): ";
+            char choice = getSingleInput();
+
+            if (choice != 'Y' && choice != 'y') {
+                return;
+            }
+        }
+    }
 }
 
 // Fungsi untuk proses pembayaran kartu
@@ -2158,6 +2269,8 @@ void showMainMenu() {
     getCurrentDateTime(currentDateTime);
     cout << "\nWaktu saat ini: " << currentDateTime << endl;
     cout << "\nSelamat datang, " << users[currentUserIndex].nama << "!" << endl;
+    cout << "Poin MOVTIX Anda: " << users[currentUserIndex].movtixPoints
+         << " poin" << endl;
 
     cout << "\n1. Daftar Film Sedang Tayang" << endl;
     cout << "2. Cari Film" << endl;
@@ -2313,6 +2426,8 @@ const char *getStatusString(TransactionStatus status) {
         return "EXPIRED";
     case CANCELLED:
         return "CANCELLED";
+    case USED:
+        return "USED";
     default:
         return "UNKNOWN";
     }
@@ -2741,10 +2856,7 @@ int main() {
                 handleTransactionHistory();
                 break;
             case 5:
-                cout
-                    << "\n[Fitur Penukaran Tiket & F&B belum diimplementasikan]"
-                    << endl;
-                pauseScreen();
+                handleTicketExchange();
                 break;
             case 6:
                 cout << "\n[Logout berhasil. Sampai jumpa, "
