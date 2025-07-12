@@ -1,0 +1,50 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CMake: Build (Default)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "${workspaceFolder}/build"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$gcc"],
+      "detail": "Shortcut: Ctrl+Shift+B. Mengompilasi proyek."
+    },
+    {
+      "label": "CMake: Run",
+      "type": "shell",
+      "command": "${workspaceFolder}/build/bin/movtix.exe",
+      "dependsOn": "CMake: Build (Default)",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "detail": "Shortcut: Ctrl+Shift+T. Menjalankan aplikasi di tab terminal baru setelah build.",
+      "presentation": {
+        "panel": "new",
+        "focus": true,
+        "clear": true
+      }
+    },
+    {
+      "label": "CMake: Configure",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["-S", "${workspaceFolder}", "-B", "${workspaceFolder}/build"],
+      "problemMatcher": [],
+      "detail": "Jalankan jika CMakeLists.txt atau file sumber baru ditambahkan."
+    },
+    {
+      "label": "CMake: Clean",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "${workspaceFolder}/build", "--target", "clean"],
+      "problemMatcher": [],
+      "detail": "Menghapus file hasil kompilasi dari direktori build."
+    }
+  ]
+}

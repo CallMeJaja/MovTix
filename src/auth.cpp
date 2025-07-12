@@ -1,0 +1,184 @@
+#include "cstring"
+#include <iostream>
+
+#include "auth.h"
+#include "globals.h"
+#include "utils.h"
+
+using namespace std;
+
+//============================================================
+// HELPER FUNCTIONS
+//============================================================
+
+int findUserByUsername(const char *username) {
+    for (int i = 0; i < userCount; i++) {
+        if (strcmp(users[i].username, username) == 0)
+            return i;
+    }
+    return -1;
+}
+
+int findUserByEmail(const char *email) {
+    for (int i = 0; i < userCount; i++) {
+        if (strcmp(users[i].email, email) == 0)
+            return i;
+    }
+    return -1;
+}
+
+bool isValidEmail(const char *email) {
+    int len = strlen(email);
+    bool hasAt = false, hasDot = false;
+    for (int i = 0; i < len; i++) {
+        if (email[i] == '@')
+            hasAt = true;
+        else if (email[i] == '.' && hasAt)
+            hasDot = true;
+    }
+    return hasAt && hasDot && len > 5;
+}
+
+//============================================================
+// AUTHENTICATION FUNCTION IMPLEMENTATIONS
+//============================================================
+
+void initializeUsers() {
+    strcpy(users[0].nama, "Admin MOVTIX");
+    strcpy(users[0].username, "admin");
+    strcpy(users[0].email, "admin@movtix.com");
+    strcpy(users[0].password, "admin123");
+    users[0].movtixPoints = 10000;
+    users[0].isActive = true;
+
+    strcpy(users[1].nama, "Reza Asriano Maulana");
+    strcpy(users[1].username, "reza");
+    strcpy(users[1].email, "reza@movtix.com");
+    strcpy(users[1].password, "reza");
+    users[1].movtixPoints = 5000;
+    users[1].isActive = true;
+
+    userCount = 2;
+}
+
+bool login() {
+    clearScreen();
+    showHeader("LOGIN MOVTIX");
+    char username[50], password[50];
+
+    cout << "\nMasukkan Username : ";
+    cin >> username;
+    cout << "Masukkan Password : ";
+    cin >> password;
+
+    int userIndex = findUserByUsername(username);
+    if (userIndex != -1 && strcmp(users[userIndex].password, password) == 0) {
+        currentUserIndex = userIndex;
+        cout << "\n[Login berhasil! Selamat datang, " << users[userIndex].nama
+             << ".]" << endl;
+        pauseScreen();
+        return true;
+    }
+
+    cout << "\n[Login gagal. Silakan periksa username dan password Anda.]"
+         << endl;
+    pauseScreen();
+    return false;
+}
+
+bool registerUser() {
+    clearScreen();
+    showHeader("PENDAFTARAN AKUN BARU");
+
+    if (userCount >= 100) {
+        cout << "\n[Maaf, database pengguna penuh!]" << endl;
+        pauseScreen();
+        return false;
+    }
+
+    char nama[100], username[50], email[100], password[50], confirmPassword[50];
+
+    cout << "\nNama Lengkap      : ";
+    cin >> nama;
+    cout << "Username          : ";
+    cin >> username;
+    if (findUserByUsername(username) != -1) {
+        cout << "\n[Username sudah digunakan.]" << endl;
+        pauseScreen();
+        return false;
+    }
+
+    cout << "Email             : ";
+    cin >> email;
+    if (!isValidEmail(email) || findUserByEmail(email) != -1) {
+        cout << "\n[Format email tidak valid atau sudah terdaftar.]" << endl;
+        pauseScreen();
+        return false;
+    }
+
+    cout << "Password          : ";
+    cin >> password;
+    cout << "Konfirmasi Pass   : ";
+    cin >> confirmPassword;
+    if (strcmp(password, confirmPassword) != 0) {
+        cout << "\n[Password tidak cocok.]" << endl;
+        pauseScreen();
+        return false;
+    }
+
+    strcpy(users[userCount].nama, nama);
+    strcpy(users[userCount].username, username);
+    strcpy(users[userCount].email, email);
+    strcpy(users[userCount].password, password);
+    users[userCount].isActive = true;
+    userCount++;
+
+    cout << "\n[Registrasi berhasil! Silakan login.]" << endl;
+    pauseScreen();
+    return true;
+}
+
+bool resetPassword() {
+    clearScreen();
+    showHeader("RESET PASSWORD");
+    char usernameOrEmail[100], inputCode[10], newPassword[50],
+        confirmPassword[50];
+    char correctCode[] = "123456";
+
+    cout << "\nMasukkan username/email Anda : ";
+    cin >> usernameOrEmail;
+
+    int userIndex = findUserByUsername(usernameOrEmail);
+    if (userIndex == -1)
+        userIndex = findUserByEmail(usernameOrEmail);
+
+    if (userIndex == -1) {
+        cout << "\n[Username/email tidak ditemukan.]" << endl;
+        pauseScreen();
+        return false;
+    }
+
+    cout << "\n[Kode verifikasi telah dikirim ke email Anda.]" << endl;
+    cout << "Masukkan kode verifikasi    : ";
+    cin >> inputCode;
+    if (strcmp(inputCode, correctCode) != 0) {
+        cout << "\n[Kode verifikasi salah.]" << endl;
+        pauseScreen();
+        return false;
+    }
+
+    cout << "Masukkan password baru      : ";
+    cin >> newPassword;
+    cout << "Konfirmasi password baru    : ";
+    cin >> confirmPassword;
+    if (strcmp(newPassword, confirmPassword) != 0) {
+        cout << "\n[Password tidak cocok.]" << endl;
+        pauseScreen();
+        return false;
+    }
+
+    strcpy(users[userIndex].password, newPassword);
+    cout << "\n[Password berhasil diubah. Silakan login.]" << endl;
+    pauseScreen();
+    return true;
+}
