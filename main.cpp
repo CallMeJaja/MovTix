@@ -1,12 +1,75 @@
 #include "conio.h"
+#include "ctime"
 #include "limits"
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 
 using namespace std;
 
-// Struktur untuk menyimpan data pengguna
+//============================================================
+// ENUM & STRUCT DEFINITIONS
+//============================================================
+
+enum SeatStatus {
+    AVAILABLE, // [ ] - Tersedia
+    PENDING,   // [P] - Menunggu Pembayaran
+    TAKEN      // [T] - Sudah Dibayar
+};
+
+struct Seat {
+    char seatNumber[4];
+    SeatStatus status; // Status kursi
+    int userId;
+    char reservationTime[20];
+    int transactionId;
+};
+
+struct FoodBeverage {
+    int id;
+    char name[50];
+    int price;
+    char category[20];
+    bool isAvailable;
+};
+
+struct SelectedFnB {
+    int fnbId;
+    char name[50];
+    int quantity;
+    int price;
+    int totalPrice;
+};
+
+enum TransactionStatus {
+    PENDING_PAYMENT, // Menunggu Pembayaran
+    PAID,            // Sudah Dibayar
+    EXPIRED,         // Transaksi Kadaluarsa
+    CANCELLED        // Transaksi Dibatalkan
+};
+
+struct Transaction {
+    int id;
+    int userId;
+    int movieId;
+    int showtimeIndex;
+    int ticketCount;
+    char selectedSeats[200];
+    SelectedFnB selectedFnB[10];
+    int fnbCount;
+    int ticketPrice;
+    int fnbPrice;
+    int totalPrice;
+    char transactionDate[20];
+    char movieTitle[100];
+    char showtime[6];
+    int auditorium;
+    TransactionStatus status; // Status transaksi
+    char expiryTime[20];      // Waktu kadaluarsa pembayaran
+    bool isActive;
+};
+
 struct User {
     char nama[100];
     char username[50];
@@ -15,7 +78,6 @@ struct User {
     bool isActive;
 };
 
-// Struktur untuk menyimpan jadwal tayang
 struct Showtime {
     char time[6]; // Format: HH:MM
     int auditorium;
@@ -23,7 +85,6 @@ struct Showtime {
     int price;
 };
 
-// Struktur untuk menyimpan data review
 struct Review {
     int userId;
     int rating; // Rating dari 1 sampai 5
@@ -31,7 +92,6 @@ struct Review {
     char date[12]; // Format: YYYY-MM-DD
 };
 
-// Struktur untuk menyimpan data film
 struct Movie {
     int id;
     char title[100];
@@ -48,12 +108,325 @@ struct Movie {
     bool isActive;
 };
 
-// Array untuk menyimpan data pengguna (maksimal 100 pengguna)
+//============================================================
+// GLOBAL VARIABLES
+//============================================================
+
 User users[100];
 Movie movies[50];
+FoodBeverage foodBeverages[50];
+Seat auditoriumSeats[5][100];
+Transaction transactions[1000];
+
+int seatCounts[5] = {80, 80, 60, 0, 0};
+int fnbCount = 0;
 int userCount = 0;
 int movieCount = 0;
 int currentUserIndex = -1;
+int transactionCount = 0;
+
+//============================================================
+// FUNCTION PROTOTYPES (DEKLARASI FUNGSI)
+//============================================================
+void clearScreen();
+void pauseScreen();
+void showHeader(const char *title);
+void getCurrentDateTime(char *dateTime);
+void getCurrentTime(char *timeStr);
+char getSingleInput();
+int getSingletDigit();
+void processPayment(int transactionId);
+void cancelReservation(int transactionId);
+
+//============================================================
+// FUNCTION DEFINITIONS
+//============================================================
+
+// Fungsi untuk menghitung waktu kadaluarsa (15 menit dari sekarang)
+void calculateExpiryTime(char *expiryTime) {
+    time_t now = time(0);
+    now += 15 * 60; // Tambah 15 menit
+    tm *ltm = localtime(&now);
+
+    sprintf(expiryTime, "%02d-%02d-%04d, %02d:%02d:%02d", ltm->tm_mday,
+            ltm->tm_mon + 1, ltm->tm_year + 1900, ltm->tm_hour, ltm->tm_min,
+            ltm->tm_sec);
+}
+
+// Fungsi untuk membandingkan waktu (return: -1 jika time1 < time2, 0 jika sama,
+// 1 jika time1 > time2)
+int compareDateTime(const char *time1, const char *time2) {
+    int day1, month1, year1, hour1, min1, sec1;
+    int day2, month2, year2, hour2, min2, sec2;
+
+    sscanf(time1, "%d-%d-%d, %d:%d:%d", &day1, &month1, &year1, &hour1, &min1,
+           &sec1);
+    sscanf(time2, "%d-%d-%d, %d:%d:%d", &day2, &month2, &year2, &hour2, &min2,
+           &sec2);
+
+    // Konversi ke detik untuk perbandingan
+    long long total1 = ((long long)year1 * 365 + month1 * 30 + day1) * 86400 +
+                       hour1 * 3600 + min1 * 60 + sec1;
+    long long total2 = ((long long)year2 * 365 + month2 * 30 + day2) * 86400 +
+                       hour2 * 3600 + min2 * 60 + sec2;
+
+    if (total1 < total2)
+        return -1;
+    if (total1 > total2)
+        return 1;
+    return 0;
+}
+
+// Fungsi untuk mengecek dan mengupdate kursi yang kadaluarsa
+void checkExpiredReservations() {
+    char currentTime[20];
+    getCurrentDateTime(currentTime);
+
+    // Cek semua transaksi yang pending
+    for (int i = 0; i < transactionCount; i++) {
+        if (transactions[i].status == PENDING_PAYMENT &&
+            transactions[i].isActive) {
+            // Jika sudah kadaluarsa
+            if (compareDateTime(currentTime, transactions[i].expiryTime) >= 0) {
+                // Update status transaksi menjadi expired
+                transactions[i].status = EXPIRED;
+
+                // Bebaskan kursi yang di-reserve
+                int auditorium = transactions[i].auditorium;
+                char seatList[200];
+                strcpy(seatList, transactions[i].selectedSeats);
+
+                char *token = strtok(seatList, ",");
+                while (token != NULL) {
+                    // Trim whitespace
+                    while (*token == ' ')
+                        token++;
+
+                    // Cari kursi dan ubah status menjadi available
+                    for (int j = 0; j < seatCounts[auditorium - 1]; j++) {
+                        if (strcmp(
+                                auditoriumSeats[auditorium - 1][j].seatNumber,
+                                token) == 0) {
+                            auditoriumSeats[auditorium - 1][j].status =
+                                AVAILABLE;
+                            auditoriumSeats[auditorium - 1][j].userId = -1;
+                            auditoriumSeats[auditorium - 1][j].transactionId =
+                                -1;
+                            strcpy(auditoriumSeats[auditorium - 1][j]
+                                       .reservationTime,
+                                   "");
+                            break;
+                        }
+                    }
+                    token = strtok(NULL, ",");
+                }
+            }
+        }
+    }
+}
+
+// Update fungsi inisialisasi kursi
+void initializeSeats() {
+    // Inisialisasi kursi untuk auditorium 1 (80 kursi: A-J, 1-8)
+    int seatIndex = 0;
+    for (char row = 'A'; row <= 'J'; row++) {
+        for (int col = 1; col <= 8; col++) {
+            sprintf(auditoriumSeats[0][seatIndex].seatNumber, "%c%02d", row,
+                    col);
+            auditoriumSeats[0][seatIndex].status = AVAILABLE;
+            auditoriumSeats[0][seatIndex].userId = -1;
+            auditoriumSeats[0][seatIndex].transactionId = -1;
+            strcpy(auditoriumSeats[0][seatIndex].reservationTime, "");
+            seatIndex++;
+        }
+    }
+
+    // Inisialisasi kursi untuk auditorium 2 (80 kursi: A-J, 1-8)
+    seatIndex = 0;
+    for (char row = 'A'; row <= 'J'; row++) {
+        for (int col = 1; col <= 8; col++) {
+            sprintf(auditoriumSeats[1][seatIndex].seatNumber, "%c%02d", row,
+                    col);
+            auditoriumSeats[1][seatIndex].status = AVAILABLE;
+            auditoriumSeats[1][seatIndex].userId = -1;
+            auditoriumSeats[1][seatIndex].transactionId = -1;
+            strcpy(auditoriumSeats[1][seatIndex].reservationTime, "");
+            seatIndex++;
+        }
+    }
+
+    // Inisialisasi kursi untuk auditorium 3 (60 kursi)
+    seatIndex = 0;
+    for (char row = 'A'; row <= 'G'; row++) {
+        for (int col = 1; col <= 8; col++) {
+            sprintf(auditoriumSeats[2][seatIndex].seatNumber, "%c%02d", row,
+                    col);
+            auditoriumSeats[2][seatIndex].status = AVAILABLE;
+            auditoriumSeats[2][seatIndex].userId = -1;
+            auditoriumSeats[2][seatIndex].transactionId = -1;
+            strcpy(auditoriumSeats[2][seatIndex].reservationTime, "");
+            seatIndex++;
+        }
+    }
+    // Baris H hanya 4 kursi (H01-H04)
+    for (int col = 1; col <= 4; col++) {
+        sprintf(auditoriumSeats[2][seatIndex].seatNumber, "H%02d", col);
+        auditoriumSeats[2][seatIndex].status = AVAILABLE;
+        auditoriumSeats[2][seatIndex].userId = -1;
+        auditoriumSeats[2][seatIndex].transactionId = -1;
+        strcpy(auditoriumSeats[2][seatIndex].reservationTime, "");
+        seatIndex++;
+    }
+
+    // Simulasi beberapa kursi sudah dibayar (taken)
+    auditoriumSeats[0][5].status = TAKEN; // A06
+    auditoriumSeats[0][5].userId = 0;
+    auditoriumSeats[0][12].status = TAKEN; // B05
+    auditoriumSeats[0][12].userId = 1;
+    auditoriumSeats[1][20].status = TAKEN; // C05
+    auditoriumSeats[1][20].userId = 0;
+}
+
+// Update fungsi display peta kursi
+void displaySeatMap(int auditorium) {
+    // Cek kursi yang kadaluarsa sebelum menampilkan
+    checkExpiredReservations();
+
+    clearScreen();
+    // Fix: Gunakan sprintf atau cara lain tanpa to_string
+    char headerTitle[100];
+    sprintf(headerTitle, "PETA KURSI AUDITORIUM %d", auditorium);
+    showHeader(headerTitle);
+
+    cout << "\nNote: [  ] = Tersedia  [P] = Pending  [T] = Terisi" << endl;
+    cout << "\n    ";
+
+    // Header kolom
+    for (int col = 1; col <= 8; col++) {
+        printf("%02d ", col);
+    }
+    cout << endl;
+
+    int seatIndex = 0;
+    char currentRow = 'A';
+
+    while (seatIndex < seatCounts[auditorium - 1]) {
+        cout << currentRow << " | ";
+
+        // Tampilkan kursi untuk baris ini
+        int colCount = 0;
+        while (seatIndex < seatCounts[auditorium - 1] &&
+               auditoriumSeats[auditorium - 1][seatIndex].seatNumber[0] ==
+                   currentRow) {
+
+            switch (auditoriumSeats[auditorium - 1][seatIndex].status) {
+            case AVAILABLE:
+                cout << "[  ] ";
+                break;
+            case PENDING:
+                cout << "[P] ";
+                break;
+            case TAKEN:
+                cout << "[T] ";
+                break;
+            }
+            seatIndex++;
+            colCount++;
+        }
+
+        // Untuk auditorium 3, baris H hanya 4 kursi
+        if (auditorium == 3 && currentRow == 'H') {
+            for (int i = colCount; i < 8; i++) {
+                cout << "     ";
+            }
+        }
+
+        cout << endl;
+        currentRow++;
+    }
+
+    cout << "\n                 [ LAYAR ]" << endl;
+    cout << "\nContoh input kursi: A01,B05,F10 (pisahkan dengan koma)" << endl;
+}
+
+// Update fungsi validasi kursi
+bool parseAndValidateSeats(const char *seatInput, int auditorium,
+                           char validSeats[][4], int &validCount) {
+    validCount = 0;
+    char tempInput[200];
+    strcpy(tempInput, seatInput);
+
+    // Split berdasarkan koma
+    char *token = strtok(tempInput, ",");
+    while (token != NULL && validCount < 10) {
+        // Trim whitespace
+        while (*token == ' ')
+            token++;
+
+        // Konversi ke uppercase
+        for (int i = 0; token[i]; i++) {
+            token[i] = toupper(token[i]);
+        }
+
+        // Validasi format
+        if (strlen(token) != 3 || !isalpha(token[0]) || !isdigit(token[1]) ||
+            !isdigit(token[2])) {
+            cout << "\nFormat kursi tidak valid: " << token
+                 << " (gunakan format A01, B05, dll)" << endl;
+            return false;
+        }
+
+        // Cek apakah kursi exist dan statusnya
+        bool seatExists = false;
+        SeatStatus seatStatus;
+
+        for (int i = 0; i < seatCounts[auditorium - 1]; i++) {
+            if (strcmp(auditoriumSeats[auditorium - 1][i].seatNumber, token) ==
+                0) {
+                seatExists = true;
+                seatStatus = auditoriumSeats[auditorium - 1][i].status;
+                break;
+            }
+        }
+
+        if (!seatExists) {
+            cout << "\nKursi " << token << " tidak tersedia di auditorium "
+                 << auditorium << endl;
+            return false;
+        }
+
+        if (seatStatus == TAKEN) {
+            cout << "\nKursi " << token << " sudah terisi!" << endl;
+            return false;
+        }
+
+        if (seatStatus == PENDING) {
+            cout << "\nKursi " << token << " sedang dalam proses pembayaran!"
+                 << endl;
+            return false;
+        }
+
+        // Cek duplikasi
+        for (int i = 0; i < validCount; i++) {
+            if (strcmp(validSeats[i], token) == 0) {
+                cout << "\nKursi " << token << " duplikat dalam input!" << endl;
+                return false;
+            }
+        }
+
+        strcpy(validSeats[validCount], token);
+        validCount++;
+
+        token = strtok(NULL, ",");
+    }
+
+    if (validCount == 0) {
+        cout << "\nTidak ada kursi yang valid!" << endl;
+        return false;
+    }
+
+    return true;
+}
 
 // Fungsi untuk membersihkan layar
 void clearScreen() { system("cls"); }
@@ -65,6 +438,562 @@ void showHeader(const char *title) {
     cout << "                    " << title << endl;
     cout << "============================================================"
          << endl;
+}
+
+// Fungsi untuk reserve kursi (status pending)
+void reserveSeats(const char validSeats[][4], int seatCount, int auditorium,
+                  int transactionId) {
+    char currentTime[20];
+    getCurrentDateTime(currentTime);
+
+    for (int i = 0; i < seatCount; i++) {
+        for (int j = 0; j < seatCounts[auditorium - 1]; j++) {
+            if (strcmp(auditoriumSeats[auditorium - 1][j].seatNumber,
+                       validSeats[i]) == 0) {
+                auditoriumSeats[auditorium - 1][j].status = PENDING;
+                auditoriumSeats[auditorium - 1][j].userId = currentUserIndex;
+                auditoriumSeats[auditorium - 1][j].transactionId =
+                    transactionId;
+                strcpy(auditoriumSeats[auditorium - 1][j].reservationTime,
+                       currentTime);
+                break;
+            }
+        }
+    }
+}
+
+// Fungsi untuk konfirmasi pembayaran
+void confirmPayment(int transactionId) {
+    // Update status transaksi
+    transactions[transactionId].status = PAID;
+
+    // Update status kursi menjadi taken
+    int auditorium = transactions[transactionId].auditorium;
+    char seatList[200];
+    strcpy(seatList, transactions[transactionId].selectedSeats);
+
+    char *token = strtok(seatList, ",");
+    while (token != NULL) {
+        while (*token == ' ')
+            token++;
+
+        for (int j = 0; j < seatCounts[auditorium - 1]; j++) {
+            if (strcmp(auditoriumSeats[auditorium - 1][j].seatNumber, token) ==
+                0) {
+                auditoriumSeats[auditorium - 1][j].status = TAKEN;
+                break;
+            }
+        }
+        token = strtok(NULL, ",");
+    }
+}
+
+// Fungsi untuk membatalkan reservasi
+void cancelReservation(int transactionId) {
+    // Update status transaksi
+    transactions[transactionId].status = CANCELLED;
+
+    // Bebaskan kursi
+    int auditorium = transactions[transactionId].auditorium;
+    char seatList[200];
+    strcpy(seatList, transactions[transactionId].selectedSeats);
+
+    char *token = strtok(seatList, ",");
+    while (token != NULL) {
+        while (*token == ' ')
+            token++;
+
+        for (int j = 0; j < seatCounts[auditorium - 1]; j++) {
+            if (strcmp(auditoriumSeats[auditorium - 1][j].seatNumber, token) ==
+                0) {
+                auditoriumSeats[auditorium - 1][j].status = AVAILABLE;
+                auditoriumSeats[auditorium - 1][j].userId = -1;
+                auditoriumSeats[auditorium - 1][j].transactionId = -1;
+                strcpy(auditoriumSeats[auditorium - 1][j].reservationTime, "");
+                break;
+            }
+        }
+        token = strtok(NULL, ",");
+    }
+}
+
+// Fungsi untuk menangani pemilihan F&B
+int handleFnBSelection(SelectedFnB selectedFnB[]) {
+    int selectedCount = 0;
+
+    while (true) {
+        clearScreen();
+        showHeader("PILIH MAKANAN & MINUMAN");
+
+        cout << "\n| No | Nama                | Harga   | Kategori |" << endl;
+        cout << "|----|---------------------|---------|----------|" << endl;
+
+        for (int i = 0; i < fnbCount; i++) {
+            if (foodBeverages[i].isAvailable) {
+                printf("| %-2d | %-19s | %-7d | %-8s |\n", i + 1,
+                       foodBeverages[i].name, foodBeverages[i].price,
+                       foodBeverages[i].category);
+            }
+        }
+
+        cout << "| 0  | Selesai memilih     |         |          |" << endl;
+
+        if (selectedCount > 0) {
+            cout << "\nItem yang sudah dipilih:" << endl;
+            for (int i = 0; i < selectedCount; i++) {
+                printf("- %dx %s = Rp %d\n", selectedFnB[i].quantity,
+                       selectedFnB[i].name, selectedFnB[i].totalPrice);
+            }
+        }
+
+        cout << "\nPilih nomor F&B (0 untuk selesai): ";
+        int choice = getSingletDigit();
+
+        if (choice == 0) {
+            break;
+        } else if (choice >= 1 && choice <= fnbCount &&
+                   foodBeverages[choice - 1].isAvailable) {
+            cout << "\nJumlah yang ingin dipesan: ";
+            int quantity;
+            cin >> quantity;
+
+            if (quantity > 0 && quantity <= 10) {
+                selectedFnB[selectedCount].fnbId = foodBeverages[choice - 1].id;
+                strcpy(selectedFnB[selectedCount].name,
+                       foodBeverages[choice - 1].name);
+                selectedFnB[selectedCount].quantity = quantity;
+                selectedFnB[selectedCount].price =
+                    foodBeverages[choice - 1].price;
+                selectedFnB[selectedCount].totalPrice =
+                    quantity * foodBeverages[choice - 1].price;
+                selectedCount++;
+
+                cout << "\nItem berhasil ditambahkan!" << endl;
+                pauseScreen();
+            } else {
+                cout << "\nJumlah tidak valid!" << endl;
+                pauseScreen();
+            }
+        } else {
+            cout << "\nPilihan tidak valid!" << endl;
+            pauseScreen();
+        }
+    }
+
+    return selectedCount;
+}
+
+// Update fungsi processTicketBooking dengan sistem pending
+void processTicketBooking(int movieIndex, int showtimeIndex) {
+    Movie movie = movies[movieIndex];
+    Showtime showtime = movie.showtimes[showtimeIndex];
+
+    // Tampilkan peta kursi
+    displaySeatMap(showtime.auditorium);
+
+    // Input kursi
+    char seatInput[200];
+    char validSeats[10][4];
+    int seatCount = 0;
+
+    cout << "\nMasukkan nomor kursi yang diinginkan: ";
+    cin >> seatInput;
+
+    if (!parseAndValidateSeats(seatInput, showtime.auditorium, validSeats,
+                               seatCount)) {
+        pauseScreen();
+        return;
+    }
+
+    // Tampilkan kursi yang dipilih
+    cout << "\nKursi yang dipilih:" << endl;
+    for (int i = 0; i < seatCount; i++) {
+        cout << "- " << validSeats[i] << endl;
+    }
+
+    int ticketPrice = seatCount * showtime.price;
+    cout << "\nJumlah tiket: " << seatCount << endl;
+    cout << "Harga per tiket: Rp " << showtime.price << endl;
+    cout << "Total harga tiket: Rp " << ticketPrice << endl;
+
+    cout << "\nKonfirmasi pemilihan kursi? (Y/N): ";
+    char confirmSeat = getSingleInput();
+    if (confirmSeat != 'Y' && confirmSeat != 'y') {
+        cout << "\nPemilihan kursi dibatalkan." << endl;
+        pauseScreen();
+        return;
+    }
+
+    // Pilih F&B (opsional)
+    SelectedFnB selectedFnB[10];
+    int fnbItemCount = 0;
+    int fnbTotalPrice = 0;
+
+    cout << "\nIngin menambah F&B? (Y/N): ";
+    char wantFnB = getSingleInput();
+
+    if (wantFnB == 'Y' || wantFnB == 'y') {
+        fnbItemCount = handleFnBSelection(selectedFnB);
+        for (int i = 0; i < fnbItemCount; i++) {
+            fnbTotalPrice += selectedFnB[i].totalPrice;
+        }
+    }
+
+    // Buat transaksi dengan status pending
+    int currentTransactionId = transactionCount;
+    transactions[currentTransactionId].id = currentTransactionId + 1;
+    transactions[currentTransactionId].userId = currentUserIndex;
+    transactions[currentTransactionId].movieId = movie.id;
+    transactions[currentTransactionId].showtimeIndex = showtimeIndex;
+    transactions[currentTransactionId].ticketCount = seatCount;
+
+    // Format selected seats
+    strcpy(transactions[currentTransactionId].selectedSeats, "");
+    for (int i = 0; i < seatCount; i++) {
+        strcat(transactions[currentTransactionId].selectedSeats, validSeats[i]);
+        if (i < seatCount - 1)
+            strcat(transactions[currentTransactionId].selectedSeats, ",");
+    }
+
+    // Simpan F&B
+    transactions[currentTransactionId].fnbCount = fnbItemCount;
+    for (int i = 0; i < fnbItemCount; i++) {
+        transactions[currentTransactionId].selectedFnB[i] = selectedFnB[i];
+    }
+
+    transactions[currentTransactionId].ticketPrice = ticketPrice;
+    transactions[currentTransactionId].fnbPrice = fnbTotalPrice;
+    transactions[currentTransactionId].totalPrice = ticketPrice + fnbTotalPrice;
+    transactions[currentTransactionId].auditorium = showtime.auditorium;
+    strcpy(transactions[currentTransactionId].movieTitle, movie.title);
+    strcpy(transactions[currentTransactionId].showtime, showtime.time);
+    getCurrentDateTime(transactions[currentTransactionId].transactionDate);
+    calculateExpiryTime(transactions[currentTransactionId].expiryTime);
+    transactions[currentTransactionId].status = PENDING_PAYMENT;
+    transactions[currentTransactionId].isActive = true;
+
+    transactionCount++;
+
+    // Reserve kursi dengan status pending
+    reserveSeats(validSeats, seatCount, showtime.auditorium,
+                 currentTransactionId);
+
+    // Tampilkan ringkasan dan lanjut ke pembayaran
+    processPayment(currentTransactionId);
+}
+
+// Fungsi untuk menampilkan konfirmasi tiket
+void showTicketConfirmation(int transactionId) {
+    clearScreen();
+    showHeader("KONFIRMASI TIKET");
+
+    Transaction trans = transactions[transactionId];
+
+    cout << "\n==================== E-TICKET MOVTIX ===================="
+         << endl;
+    cout << "Kode Booking   : MOVTIX" << setfill('0') << setw(4) << trans.id
+         << endl;
+    cout << "Film           : " << trans.movieTitle << endl;
+    cout << "Tanggal        : " << trans.transactionDate << endl;
+    cout << "Jam Tayang     : " << trans.showtime << endl;
+    cout << "Auditorium     : " << trans.auditorium << endl;
+    cout << "Kursi          : " << trans.selectedSeats << endl;
+    cout << "Jumlah Tiket   : " << trans.ticketCount << endl;
+
+    if (trans.fnbCount > 0) {
+        cout << "\nF&B yang dipesan:" << endl;
+        for (int i = 0; i < trans.fnbCount; i++) {
+            printf("- %dx %s = Rp %d\n", trans.selectedFnB[i].quantity,
+                   trans.selectedFnB[i].name, trans.selectedFnB[i].totalPrice);
+        }
+    }
+
+    cout << "\nTotal Pembayaran: Rp " << trans.totalPrice << endl;
+    cout << "Status          : LUNAS" << endl;
+    cout << "=========================================================" << endl;
+
+    cout << "\nTiket berhasil dibeli!" << endl;
+    cout << "Simpan kode booking untuk penukaran tiket di bioskop." << endl;
+    pauseScreen();
+}
+
+// Fungsi untuk proses pembayaran
+void processPayment(int transactionId) {
+    while (true) {
+        // Cek apakah transaksi sudah expired
+        char currentTime[20];
+        getCurrentDateTime(currentTime);
+
+        if (compareDateTime(currentTime,
+                            transactions[transactionId].expiryTime) >= 0) {
+            clearScreen();
+            showHeader("WAKTU PEMBAYARAN HABIS");
+            cout << "\nMaaf, waktu pembayaran telah habis!" << endl;
+            cout << "Reservasi kursi Anda telah dibatalkan." << endl;
+
+            // Cancel reservation
+            cancelReservation(transactionId);
+            pauseScreen();
+            return;
+        }
+
+        clearScreen();
+        showHeader("PEMBAYARAN TIKET");
+
+        Transaction trans = transactions[transactionId];
+
+        cout << "\nKode Booking: MOVTIX" << setfill('0') << setw(4) << trans.id
+             << endl;
+        cout << "Film        : " << trans.movieTitle << endl;
+        cout << "Jadwal      : " << trans.showtime << endl;
+        cout << "Kursi       : " << trans.selectedSeats << endl;
+        cout << "Jumlah Tiket: " << trans.ticketCount << endl;
+
+        if (trans.fnbCount > 0) {
+            cout << "\nF&B yang dipesan:" << endl;
+            for (int i = 0; i < trans.fnbCount; i++) {
+                printf("- %dx %s = Rp %d\n", trans.selectedFnB[i].quantity,
+                       trans.selectedFnB[i].name,
+                       trans.selectedFnB[i].totalPrice);
+            }
+        }
+
+        cout << "\nTotal Pembayaran: Rp " << trans.totalPrice << endl;
+        cout << "Batas Waktu     : " << trans.expiryTime << endl;
+        cout << "Waktu Sekarang  : " << currentTime << endl;
+
+        // Hitung sisa waktu
+        int timeDiff = compareDateTime(trans.expiryTime, currentTime);
+        if (timeDiff > 0) {
+            cout << "Status          : Masih dalam batas waktu" << endl;
+        } else {
+            cout << "Status          : HAMPIR HABIS!" << endl;
+        }
+
+        cout << "\nPilihan:" << endl;
+        cout << "1. Bayar Sekarang" << endl;
+        cout << "2. Kembali ke Menu Utama (Reservasi tetap aktif)" << endl;
+        cout << "3. Batalkan Pesanan" << endl;
+        cout << "\nPilihan Anda [1-3]: ";
+
+        char choice = getSingleInput();
+
+        switch (choice) {
+        case '1':
+            // Proses pembayaran
+            clearScreen();
+            showHeader("PROSES PEMBAYARAN");
+            cout << "\nMemproses pembayaran..." << endl;
+            cout << "Pembayaran berhasil!" << endl;
+
+            // Konfirmasi pembayaran
+            confirmPayment(transactionId);
+
+            // Update popularitas
+            for (int i = 0; i < movieCount; i++) {
+                if (movies[i].id == trans.movieId) {
+                    movies[i].popularity += trans.ticketCount;
+                    break;
+                }
+            }
+
+            // Tampilkan e-ticket
+            showTicketConfirmation(transactionId);
+            return;
+
+        case '2':
+            cout << "\nReservasi kursi masih aktif sampai " << trans.expiryTime
+                 << endl;
+            cout << "Anda dapat melanjutkan pembayaran melalui menu Histori "
+                    "Transaksi."
+                 << endl;
+            pauseScreen();
+            return;
+
+        // FIX: Added curly braces to solve "crosses initialization" error
+        case '3': {
+            cout << "\nApakah Anda yakin ingin membatalkan pesanan? (Y/N): ";
+            char confirm = getSingleInput();
+            if (confirm == 'Y' || confirm == 'y') {
+                cancelReservation(transactionId);
+                cout << "\nPesanan dibatalkan. Kursi telah dibebaskan." << endl;
+                pauseScreen();
+                return;
+            }
+            break;
+        }
+
+        default:
+            cout << "\nPilihan tidak valid!" << endl;
+            pauseScreen();
+            break;
+        }
+    }
+}
+// Fungsi untuk inisialisasi F&B
+void initializeFnB() {
+    // Makanan
+    foodBeverages[0] = {1, "Popcorn Regular", 25000, "Food", true};
+    foodBeverages[1] = {2, "Popcorn Large", 35000, "Food", true};
+    foodBeverages[2] = {3, "Nachos", 30000, "Food", true};
+    foodBeverages[3] = {4, "Hot Dog", 20000, "Food", true};
+    foodBeverages[4] = {5, "French Fries", 22000, "Food", true};
+
+    // Minuman
+    foodBeverages[5] = {6, "Coca Cola Regular", 15000, "Beverage", true};
+    foodBeverages[6] = {7, "Coca Cola Large", 20000, "Beverage", true};
+    foodBeverages[7] = {8, "Orange Juice", 18000, "Beverage", true};
+    foodBeverages[8] = {9, "Mineral Water", 10000, "Beverage", true};
+    foodBeverages[9] = {10, "Ice Coffee", 25000, "Beverage", true};
+
+    fnbCount = 10;
+}
+
+void getCurrentDateTime(char *dateTime) {
+    time_t now = time(0);
+    tm *ltm = localtime(&now);
+
+    sprintf(dateTime, "%02d-%02d-%04d, %02d:%02d:%02d", ltm->tm_mday,
+            ltm->tm_mon + 1, ltm->tm_year + 1900, ltm->tm_hour, ltm->tm_min,
+            ltm->tm_sec);
+}
+
+// Tambahkan fungsi untuk mendapatkan waktu saja (untuk validasi jadwal)
+void getCurrentTime(char *timeStr) {
+    time_t now = time(0);
+    tm *ltm = localtime(&now);
+
+    sprintf(timeStr, "%02d:%02d", ltm->tm_hour, ltm->tm_min);
+}
+
+// Fungsi untuk membandingkan waktu (format HH:MM)
+int compareTime(const char *time1, const char *time2) {
+    int hour1, min1, hour2, min2;
+    sscanf(time1, "%d:%d", &hour1, &min1);
+    sscanf(time2, "%d:%d", &hour2, &min2);
+
+    int totalMin1 = hour1 * 60 + min1;
+    int totalMin2 = hour2 * 60 + min2;
+
+    if (totalMin1 < totalMin2)
+        return -1;
+    if (totalMin1 > totalMin2)
+        return 1;
+    return 0;
+}
+
+// Fungsi untuk menampilkan jadwal film yang tersedia
+void showMovieSchedule(int movieIndex) {
+    clearScreen();
+    showHeader("JADWAL TAYANG FILM");
+
+    Movie movie = movies[movieIndex];
+    char currentTime[6];
+    getCurrentTime(currentTime);
+
+    cout << "\nFilm: " << movie.title << endl;
+    cout << "Waktu saat ini: " << currentTime << endl;
+
+    cout << "\n| No | Waktu | Audi | Kapasitas | Harga     | Status    |"
+         << endl;
+    cout << "|----|-------|------|-----------|-----------|-----------|" << endl;
+
+    bool hasAvailableShow = false;
+    for (int i = 0; i < movie.showtimeCount; i++) {
+        char status[15];
+        bool canBook = compareTime(currentTime, movie.showtimes[i].time) < 0;
+
+        if (canBook) {
+            strcpy(status, "Tersedia");
+            hasAvailableShow = true;
+        } else {
+            strcpy(status, "Berakhir");
+        }
+
+        printf("| %-2d | %-5s | %-4d | %-9d | Rp %-6d | %-9s |\n", i + 1,
+               movie.showtimes[i].time, movie.showtimes[i].auditorium,
+               movie.showtimes[i].capacity, movie.showtimes[i].price, status);
+    }
+
+    if (!hasAvailableShow) {
+        cout << "\n[Maaf, tidak ada jadwal yang tersedia untuk hari ini]"
+             << endl;
+        pauseScreen();
+        return;
+    }
+
+    cout << "\n[Pilih nomor jadwal untuk pesan tiket, 0 untuk kembali]" << endl;
+    cout << "\nPilihan Anda: ";
+
+    int input = getSingletDigit();
+    if (input >= 1 && input <= movie.showtimeCount) {
+        // Validasi jadwal masih tersedia
+        if (compareTime(currentTime, movie.showtimes[input - 1].time) < 0) {
+            processTicketBooking(movieIndex, input - 1);
+        } else {
+            cout << "\n[Jadwal sudah berakhir! Silakan pilih jadwal lain.]"
+                 << endl;
+            pauseScreen();
+            showMovieSchedule(movieIndex); // Kembali ke pemilihan jadwal
+        }
+    } else if (input != 0) {
+        cout << "\nPilihan tidak valid!" << endl;
+        pauseScreen();
+        showMovieSchedule(movieIndex);
+    }
+}
+
+// Fungsi utama untuk handle pemesanan tiket
+void handleTicketBooking() {
+    while (true) {
+        clearScreen();
+        showHeader("PESAN TIKET FILM");
+
+        char currentDateTime[20];
+        getCurrentDateTime(currentDateTime);
+        cout << "\nWaktu saat ini: " << currentDateTime << endl;
+
+        cout << "\n| No | Judul                  | Genre     | Rating | Jadwal "
+                "Tersedia |"
+             << endl;
+        cout << "|----|------------------------|-----------|--------|----------"
+                "-------|"
+             << endl;
+
+        for (int i = 0; i < movieCount; i++) {
+            if (movies[i].isActive) {
+                // Hitung jadwal yang masih tersedia
+                char currentTime[6];
+                getCurrentTime(currentTime);
+                int availableShows = 0;
+
+                for (int j = 0; j < movies[i].showtimeCount; j++) {
+                    if (compareTime(currentTime, movies[i].showtimes[j].time) <
+                        0) {
+                        availableShows++;
+                    }
+                }
+
+                printf("| %-2d | %-22s | %-9s | %-6s | %8d show |\n", i + 1,
+                       movies[i].title, movies[i].genre, movies[i].rating,
+                       availableShows);
+            }
+        }
+
+        cout << "\n[Pilih nomor film untuk lihat jadwal, 0 untuk kembali]"
+             << endl;
+        cout << "\nPilihan Anda: ";
+
+        int input = getSingletDigit();
+        if (input >= 1 && input <= movieCount) {
+            showMovieSchedule(input - 1);
+        } else if (input == 0) {
+            break; // Kembali ke menu utama
+        } else {
+            cout << "\nInput tidak valid!" << endl;
+            pauseScreen();
+        }
+    }
 }
 
 // Fungsi untuk mencari pengguna berdasarkan username
@@ -790,6 +1719,12 @@ void showMainMenu() {
     clearScreen();
     showHeader("MENU UTAMA MOVTIX");
 
+    // Tampilkan waktu saat ini
+    char currentDateTime[20];
+    getCurrentDateTime(currentDateTime);
+    cout << "\nWaktu saat ini: " << currentDateTime << endl;
+    cout << "\nSelamat datang, " << users[currentUserIndex].nama << "!" << endl;
+
     cout << "\n1. Daftar Film Sedang Tayang" << endl;
     cout << "2. Cari Film" << endl;
     cout << "3. Pesan Tiket" << endl;
@@ -904,7 +1839,7 @@ void handleSearchMovie() {
         showHeader("CARI FILM MOVTIX");
         cout << "\nMasukkan kata kunci pencarian (judul/genre): ";
 
-        cin.getline(keyword, sizeof(keyword));
+        cin >> keyword;
 
         // Lakukan pencarian
         searchMovies(keyword, searchResult, resultCount);
@@ -919,6 +1854,341 @@ void handleSearchMovie() {
             break; // Kembali ke menu utama
         } else if (choice != 'Y' && choice != 'y') {
             cout << "\nPilihan tidak valid! Kembali ke menu utama." << endl;
+            pauseScreen();
+            break;
+        }
+    }
+}
+
+// Tambahkan fungsi untuk format tanggal yang lebih pendek
+void formatDate(const char *fullDateTime, char *shortDate) {
+    int day, month, year, hour, min, sec;
+    sscanf(fullDateTime, "%d-%d-%d, %d:%d:%d", &day, &month, &year, &hour, &min,
+           &sec);
+    sprintf(shortDate, "%02d-%02d-%02d", day, month, year % 100);
+}
+
+// Fungsi untuk mendapatkan string status transaksi
+const char *getStatusString(TransactionStatus status) {
+    switch (status) {
+    case PENDING_PAYMENT:
+        return "UNPAID";
+    case PAID:
+        return "PAID";
+    case EXPIRED:
+        return "EXPIRED";
+    case CANCELLED:
+        return "CANCELLED";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+// Fungsi untuk menampilkan detail transaksi
+void showTransactionDetail(int transactionIndex) {
+    clearScreen();
+    showHeader("DETAIL TRANSAKSI");
+
+    Transaction trans = transactions[transactionIndex];
+
+    cout << "\n==================== DETAIL TRANSAKSI ===================="
+         << endl;
+    cout << "Kode Booking   : MOVTIX" << setfill('0') << setw(4) << trans.id
+         << endl;
+    cout << "Status         : " << getStatusString(trans.status) << endl;
+    cout << "Tanggal Pesan  : " << trans.transactionDate << endl;
+
+    if (trans.status == PENDING_PAYMENT) {
+        cout << "Batas Bayar    : " << trans.expiryTime << endl;
+
+        // Cek apakah masih dalam batas waktu
+        char currentTime[20];
+        getCurrentDateTime(currentTime);
+        int timeDiff = compareDateTime(trans.expiryTime, currentTime);
+
+        if (timeDiff > 0) {
+            cout << "Status Waktu   : Masih dalam batas waktu" << endl;
+        } else {
+            cout << "Status Waktu   : KADALUARSA" << endl;
+        }
+    }
+
+    cout << "\n--- Detail Film ---" << endl;
+    cout << "Film           : " << trans.movieTitle << endl;
+    cout << "Jadwal         : " << trans.showtime << endl;
+    cout << "Auditorium     : " << trans.auditorium << endl;
+    cout << "Kursi          : " << trans.selectedSeats << endl;
+    cout << "Jumlah Tiket   : " << trans.ticketCount << " tiket" << endl;
+    cout << "Harga Tiket    : Rp " << trans.ticketPrice << endl;
+
+    if (trans.fnbCount > 0) {
+        cout << "\n--- Detail F&B ---" << endl;
+        for (int i = 0; i < trans.fnbCount; i++) {
+            printf("- %dx %s = Rp %d\n", trans.selectedFnB[i].quantity,
+                   trans.selectedFnB[i].name, trans.selectedFnB[i].totalPrice);
+        }
+        cout << "Total F&B      : Rp " << trans.fnbPrice << endl;
+    }
+
+    cout << "\nTOTAL BAYAR    : Rp " << trans.totalPrice << endl;
+    cout << "=========================================================="
+         << endl;
+
+    // Menu aksi berdasarkan status
+    if (trans.status == PENDING_PAYMENT) {
+        char currentTime[20];
+        getCurrentDateTime(currentTime);
+
+        if (compareDateTime(currentTime, trans.expiryTime) >= 0) {
+            cout << "\n[Transaksi ini telah kadaluarsa dan dibatalkan otomatis]"
+                 << endl;
+            pauseScreen();
+            return;
+        }
+
+        cout << "\nPilihan:" << endl;
+        cout << "1. Lanjutkan Pembayaran" << endl;
+        cout << "2. Batalkan Transaksi" << endl;
+        cout << "0. Kembali" << endl;
+        cout << "\nPilihan Anda [0-2]: ";
+
+        char choice = getSingleInput();
+
+        switch (choice) {
+        case '1':
+            // Lanjut ke pembayaran
+            processPayment(transactionIndex);
+            break;
+
+        case '2': {
+            cout << "\nApakah Anda yakin ingin membatalkan transaksi ini? "
+                    "(Y/N): ";
+            char confirm = getSingleInput();
+            if (confirm == 'Y' || confirm == 'y') {
+                cancelReservation(transactionIndex);
+                cout << "\nTransaksi berhasil dibatalkan. Kursi telah "
+                        "dibebaskan."
+                     << endl;
+                pauseScreen();
+            }
+            break;
+        }
+
+        case '0':
+            return;
+
+        default:
+            cout << "\nPilihan tidak valid!" << endl;
+            pauseScreen();
+            showTransactionDetail(transactionIndex);
+            break;
+        }
+    } else if (trans.status == PAID) {
+        cout << "\n[Transaksi ini telah dibayar. E-Ticket dapat digunakan "
+                "untuk masuk bioskop]"
+             << endl;
+        cout << "\nPilihan:" << endl;
+        cout << "1. Tampilkan E-Ticket" << endl;
+        cout << "0. Kembali" << endl;
+        cout << "\nPilihan Anda [0-1]: ";
+
+        char choice = getSingleInput();
+
+        if (choice == '1') {
+            showTicketConfirmation(transactionIndex);
+        }
+    } else if (trans.status == EXPIRED) {
+        cout << "\n[Transaksi ini telah kadaluarsa karena tidak dibayar dalam "
+                "batas waktu]"
+             << endl;
+        pauseScreen();
+    } else if (trans.status == CANCELLED) {
+        cout << "\n[Transaksi ini telah dibatalkan]" << endl;
+        pauseScreen();
+    }
+}
+
+// Fungsi untuk menampilkan histori transaksi user
+void showTransactionHistory() {
+    clearScreen();
+    showHeader("HISTORI TRANSAKSI MOVTIX");
+
+    // Cek expired reservations terlebih dahulu
+    checkExpiredReservations();
+
+    // Filter transaksi berdasarkan user yang sedang login
+    int userTransactions[100];
+    int userTransactionCount = 0;
+
+    for (int i = 0; i < transactionCount; i++) {
+        if (transactions[i].userId == currentUserIndex &&
+            transactions[i].isActive) {
+            userTransactions[userTransactionCount] = i;
+            userTransactionCount++;
+        }
+    }
+
+    if (userTransactionCount == 0) {
+        cout << "\nAnda belum memiliki riwayat transaksi." << endl;
+        cout << "Silakan pesan tiket terlebih dahulu." << endl;
+        pauseScreen();
+        return;
+    }
+
+    cout << "\nNama: " << users[currentUserIndex].nama << endl;
+    cout << "\n| No | Tanggal   | Film         | Jadwal | Audi | Kursi   | "
+            "Status   | Total    |"
+         << endl;
+    cout << "|----|-----------|--------------|--------|------|---------|-------"
+            "---|----------|"
+         << endl;
+
+    for (int i = 0; i < userTransactionCount; i++) {
+        int transIndex = userTransactions[i];
+        Transaction trans = transactions[transIndex];
+
+        char shortDate[10];
+        formatDate(trans.transactionDate, shortDate);
+
+        // Truncate title jika terlalu panjang
+        char shortTitle[13];
+        if (strlen(trans.movieTitle) > 12) {
+            strncpy(shortTitle, trans.movieTitle, 12);
+            shortTitle[12] = '\0';
+        } else {
+            strcpy(shortTitle, trans.movieTitle);
+        }
+
+        // Truncate kursi jika terlalu panjang
+        char shortSeats[8];
+        if (strlen(trans.selectedSeats) > 7) {
+            strncpy(shortSeats, trans.selectedSeats, 7);
+            shortSeats[7] = '\0';
+        } else {
+            strcpy(shortSeats, trans.selectedSeats);
+        }
+
+        printf("| %-2d | %-9s | %-12s | %-6s | %-4d | %-7s | %-8s | %-8d |\n",
+               i + 1, shortDate, shortTitle, trans.showtime, trans.auditorium,
+               shortSeats, getStatusString(trans.status), trans.totalPrice);
+    }
+
+    cout << "\n[Pilih nomor transaksi untuk detail/pembayaran ulang (jika "
+            "UNPAID), atau 0 untuk kembali]"
+         << endl;
+    cout << "\nPilihan Anda: ";
+
+    int choice = getSingletDigit();
+
+    if (choice >= 1 && choice <= userTransactionCount) {
+        int selectedTransIndex = userTransactions[choice - 1];
+        showTransactionDetail(selectedTransIndex);
+    } else if (choice != 0) {
+        cout << "\nPilihan tidak valid!" << endl;
+        pauseScreen();
+        showTransactionHistory(); // Kembali ke histori
+    }
+}
+
+// Fungsi untuk menampilkan statistik transaksi user
+void showTransactionSummary() {
+    clearScreen();
+    showHeader("RINGKASAN TRANSAKSI");
+
+    int totalTransactions = 0;
+    int paidTransactions = 0;
+    int unpaidTransactions = 0;
+    int expiredTransactions = 0;
+    int cancelledTransactions = 0;
+    int totalSpent = 0;
+    int totalTickets = 0;
+
+    for (int i = 0; i < transactionCount; i++) {
+        if (transactions[i].userId == currentUserIndex &&
+            transactions[i].isActive) {
+            totalTransactions++;
+
+            switch (transactions[i].status) {
+            case PAID:
+                paidTransactions++;
+                totalSpent += transactions[i].totalPrice;
+                totalTickets += transactions[i].ticketCount;
+                break;
+            case PENDING_PAYMENT:
+                unpaidTransactions++;
+                break;
+            case EXPIRED:
+                expiredTransactions++;
+                break;
+            case CANCELLED:
+                cancelledTransactions++;
+                break;
+            }
+        }
+    }
+
+    cout << "\nNama: " << users[currentUserIndex].nama << endl;
+    cout << "\n==================== RINGKASAN AKTIVITAS ===================="
+         << endl;
+    cout << "Total Transaksi      : " << totalTransactions << " transaksi"
+         << endl;
+    cout << "Transaksi Berhasil   : " << paidTransactions << " transaksi"
+         << endl;
+    cout << "Menunggu Pembayaran  : " << unpaidTransactions << " transaksi"
+         << endl;
+    cout << "Transaksi Kadaluarsa : " << expiredTransactions << " transaksi"
+         << endl;
+    cout << "Transaksi Dibatalkan : " << cancelledTransactions << " transaksi"
+         << endl;
+    cout << "\n===================== STATISTIK PEMBELIAN ====================="
+         << endl;
+    cout << "Total Tiket Dibeli   : " << totalTickets << " tiket" << endl;
+    cout << "Total Pengeluaran    : Rp " << totalSpent << endl;
+
+    if (paidTransactions > 0) {
+        cout << "Rata-rata per Transaksi : Rp "
+             << (totalSpent / paidTransactions) << endl;
+    }
+
+    cout << "============================================================="
+         << endl;
+
+    pauseScreen();
+}
+
+// Fungsi utama untuk handle menu histori transaksi
+void handleTransactionHistory() {
+    while (true) {
+        clearScreen();
+        showHeader("HISTORI TRANSAKSI MOVTIX");
+
+        char currentDateTime[20];
+        getCurrentDateTime(currentDateTime);
+        cout << "\nWaktu saat ini: " << currentDateTime << endl;
+        cout << "\nSelamat datang, " << users[currentUserIndex].nama << "!"
+             << endl;
+
+        cout << "\n1. Lihat Histori Transaksi" << endl;
+        cout << "2. Ringkasan Aktivitas" << endl;
+        cout << "0. Kembali ke Menu Utama" << endl;
+        cout << "\nPilihan Anda [0-2]: ";
+
+        char choice = getSingleInput();
+
+        switch (choice) {
+        case '1':
+            showTransactionHistory();
+            break;
+
+        case '2':
+            showTransactionSummary();
+            break;
+
+        case '0':
+            return;
+
+        default:
+            cout << "\nPilihan tidak valid!" << endl;
             pauseScreen();
             break;
         }
@@ -947,6 +2217,8 @@ int main() {
 
     // Inisialisasi data film
     initializeMovies();
+    initializeSeats();
+    initializeFnB();
 
     while (true) {
         if (!isLoggedIn) {
@@ -996,13 +2268,10 @@ int main() {
                 handleSearchMovie();
                 break;
             case 3:
-                cout << "\n[Fitur Pesan Tiket belum diimplementasikan]" << endl;
-                pauseScreen();
+                handleTicketBooking();
                 break;
             case 4:
-                cout << "\n[Fitur Histori Transaksi belum diimplementasikan]"
-                     << endl;
-                pauseScreen();
+                handleTransactionHistory();
                 break;
             case 5:
                 cout
