@@ -28,13 +28,13 @@ struct Review {
     int userId;
     int rating; // Rating dari 1 sampai 5
     char comment[200];
-    char date[120]; // Format: YYYY-MM-DD
+    char date[12]; // Format: YYYY-MM-DD
 };
 
 // Struktur untuk menyimpan data film
 struct Movie {
     int id;
-    char title[1000];
+    char title[100];
     char genre[50];
     int duration;    // Durasi dalam menit
     char rating[10]; // Rating film (misal: PG-13, R)
@@ -799,6 +799,132 @@ void showMainMenu() {
     cout << "\nMasukkan pilihan [1-6]: ";
 }
 
+// Replace the current searchMovies function with this optimized version
+void searchMovies(const char *keyword, int results[], int &resultCount) {
+    resultCount = 0;
+
+    for (int i = 0; i < movieCount; i++) {
+        if (movies[i].isActive) {
+            bool found = false;
+
+            // Konversi ke lowercase untuk pencarian case-insensitive
+            char movieTitle[100];
+            char movieGenre[50];
+            char searchKeyword[100];
+
+            strcpy(movieTitle, movies[i].title);
+            strcpy(movieGenre, movies[i].genre);
+            strcpy(searchKeyword, keyword);
+
+            // Konversi ke lowercase
+            for (int j = 0; j < strlen(movieTitle); j++) {
+                movieTitle[j] = tolower(movieTitle[j]);
+            }
+
+            for (int j = 0; j < strlen(movieGenre); j++) {
+                movieGenre[j] = tolower(movieGenre[j]);
+            }
+
+            for (int j = 0; j < strlen(searchKeyword); j++) {
+                searchKeyword[j] = tolower(searchKeyword[j]);
+            }
+
+            // Cari di judul (substring)
+            if (strstr(movieTitle, searchKeyword) != nullptr) {
+                found = true;
+            }
+
+            // Cari di genre (substring)
+            if (!found && strstr(movieGenre, searchKeyword) != nullptr) {
+                found = true;
+            }
+
+            if (found) {
+                // Simpan index movie, bukan copy seluruh struct
+                results[resultCount] = i;
+                resultCount++;
+            }
+        }
+    }
+}
+
+// Update displaySearchResults to work with indices instead of full Movie
+// objects
+void displaySearchResults(int results[], int resultCount, const char *keyword) {
+    clearScreen();
+    showHeader("CARI FILM MOVTIX");
+
+    if (resultCount == 0) {
+        cout << "\nTidak ada film yang ditemukan untuk kata kunci : " << keyword
+             << endl;
+        cout << "\nSaran:" << endl;
+        cout << "- Pastikan ejaan kata kunci." << endl;
+        cout << "- Coba kata kunci lain." << endl;
+        pauseScreen();
+        return;
+    }
+
+    cout << "\nHasil pencarian untuk: " << keyword << endl;
+
+    cout << "\nHasil pencarian:" << endl;
+    cout << "| No | Judul               | Genre     | Jadwal              |"
+         << endl;
+    cout << "|----|---------------------|-----------|---------------------|"
+         << endl;
+
+    for (int i = 0; i < resultCount; i++) {
+        char showtimes[100];
+        formatShowtimes(movies[results[i]], showtimes);
+        printf("| %-2d | %-19s | %-9s | %-19s |\n", i + 1,
+               movies[results[i]].title, movies[results[i]].genre, showtimes);
+    }
+
+    cout << "\n[Pilih nomor film untuk detail, 0 untuk kembali]" << endl;
+    cout << "\nPilihan Anda: ";
+    int input = getSingletDigit();
+
+    if (input >= 1 && input <= resultCount) {
+        // Gunakan index yang sudah disimpan
+        showMovieDetail(results[input - 1]);
+    } else if (input != 0) {
+        cout << "\nPilihan tidak valid! Silakan pilih nomor film yang "
+                "tersedia."
+             << endl;
+        pauseScreen();
+    }
+}
+
+void handleSearchMovie() {
+    int searchResult[50];
+    int resultCount = 0;
+    char keyword[100];
+
+    while (true) {
+        clearScreen();
+        showHeader("CARI FILM MOVTIX");
+        cout << "\nMasukkan kata kunci pencarian (judul/genre): ";
+
+        cin.getline(keyword, sizeof(keyword));
+
+        // Lakukan pencarian
+        searchMovies(keyword, searchResult, resultCount);
+
+        // Tampilkan hasil
+        displaySearchResults(searchResult, resultCount, keyword);
+
+        // Tanyakan apakah ingin mencari lagi
+        cout << "\nIngin mencari lagi? (Y/N): ";
+        char choice = getSingleInput();
+        if (choice == 'N' || choice == 'n') {
+            break; // Kembali ke menu utama
+        } else if (choice != 'Y' && choice != 'y') {
+            cout << "\nPilihan tidak valid! Kembali ke menu utama." << endl;
+            pauseScreen();
+            break;
+        }
+    }
+}
+
 // Fungsi utama program
 int main() {
     int choice;
@@ -867,8 +993,7 @@ int main() {
                 handleMovieListMenu();
                 break;
             case 2:
-                cout << "\n[Fitur Cari Film belum diimplementasikan]" << endl;
-                pauseScreen();
+                handleSearchMovie();
                 break;
             case 3:
                 cout << "\n[Fitur Pesan Tiket belum diimplementasikan]" << endl;
