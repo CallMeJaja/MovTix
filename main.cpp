@@ -18,6 +18,19 @@ enum SeatStatus {
     TAKEN      // [T] - Sudah Dibayar
 };
 
+enum PaymentMethod {
+    BANK_TRANSFER, // Bank Transfer Local
+    CARD_PAYMENT,  // VISA & MASTERCARD
+    MOVTIX_POINTS  // POINT MOVTIX
+};
+
+enum TransactionStatus {
+    PENDING_PAYMENT, // Menunggu Pembayaran
+    PAID,            // Sudah Dibayar
+    EXPIRED,         // Transaksi Kadaluarsa
+    CANCELLED        // Transaksi Dibatalkan
+};
+
 struct Seat {
     char seatNumber[4];
     SeatStatus status; // Status kursi
@@ -42,11 +55,15 @@ struct SelectedFnB {
     int totalPrice;
 };
 
-enum TransactionStatus {
-    PENDING_PAYMENT, // Menunggu Pembayaran
-    PAID,            // Sudah Dibayar
-    EXPIRED,         // Transaksi Kadaluarsa
-    CANCELLED        // Transaksi Dibatalkan
+struct PaymentInfo {
+    PaymentMethod method;
+    char cardNumber[20];
+    char cardName[50];
+    char expiry[6];
+    char cvv[4];
+    char bankName[50];
+    int pointsUsed;
+    bool isSuccess;
 };
 
 struct Transaction {
@@ -61,13 +78,16 @@ struct Transaction {
     int ticketPrice;
     int fnbPrice;
     int totalPrice;
-    char transactionDate[20];
+    char transactionDate[25];
     char movieTitle[100];
     char showtime[6];
     int auditorium;
     TransactionStatus status; // Status transaksi
     char expiryTime[20];      // Waktu kadaluarsa pembayaran
     bool isActive;
+    char bookingCode[10];
+    char passkey[10];
+    PaymentInfo paymentInfo;
 };
 
 struct User {
@@ -76,6 +96,7 @@ struct User {
     char email[100];
     char password[50];
     bool isActive;
+    int movtixPoints;
 };
 
 struct Showtime {
@@ -135,8 +156,16 @@ void getCurrentDateTime(char *dateTime);
 void getCurrentTime(char *timeStr);
 char getSingleInput();
 int getSingletDigit();
+int getNumberInput();
 void processPayment(int transactionId);
 void cancelReservation(int transactionId);
+void generationBookingCode(char *bookingCode);
+void generatePasskey(char *passkey);
+const char *detectCardType(const char *cardNumber);
+bool validateCard(const char *cardNumber, const char *expiry, const char *cvv);
+bool processCardPayment(int totalAmount, PaymentInfo *paymentInfo);
+bool processBankPayment(int totalAmount, PaymentInfo *paymentInfo);
+bool processPointsPayment(int totalAmount, PaymentInfo *paymentInfo);
 
 //============================================================
 // FUNCTION DEFINITIONS
@@ -298,14 +327,14 @@ void displaySeatMap(int auditorium) {
     sprintf(headerTitle, "PETA KURSI AUDITORIUM %d", auditorium);
     showHeader(headerTitle);
 
-    cout << "\nNote: [  ] = Tersedia  [P] = Pending  [T] = Terisi" << endl;
-    cout << "\n    ";
+    cout << "\nNote: [  ] = Tersedia  [PP] = Pending  [TI] = Terisi\n" << endl;
 
     // Header kolom
+    cout << "     ";
     for (int col = 1; col <= 8; col++) {
-        printf("%02d ", col);
+        printf("%02d   ", col);
     }
-    cout << endl;
+    cout << endl << endl;
 
     int seatIndex = 0;
     char currentRow = 'A';
@@ -324,12 +353,13 @@ void displaySeatMap(int auditorium) {
                 cout << "[  ] ";
                 break;
             case PENDING:
-                cout << "[P] ";
+                cout << "[PD] ";
                 break;
             case TAKEN:
-                cout << "[T] ";
+                cout << "[TI] ";
                 break;
             }
+
             seatIndex++;
             colCount++;
         }
@@ -547,7 +577,7 @@ int handleFnBSelection(SelectedFnB selectedFnB[]) {
         }
 
         cout << "\nPilih nomor F&B (0 untuk selesai): ";
-        int choice = getSingletDigit();
+        int choice = getNumberInput();
 
         if (choice == 0) {
             break;
@@ -641,6 +671,7 @@ void processTicketBooking(int movieIndex, int showtimeIndex) {
 
     // Buat transaksi dengan status pending
     int currentTransactionId = transactionCount;
+
     transactions[currentTransactionId].id = currentTransactionId + 1;
     transactions[currentTransactionId].userId = currentUserIndex;
     transactions[currentTransactionId].movieId = movie.id;
@@ -665,14 +696,18 @@ void processTicketBooking(int movieIndex, int showtimeIndex) {
     transactions[currentTransactionId].fnbPrice = fnbTotalPrice;
     transactions[currentTransactionId].totalPrice = ticketPrice + fnbTotalPrice;
     transactions[currentTransactionId].auditorium = showtime.auditorium;
-    strcpy(transactions[currentTransactionId].movieTitle, movie.title);
-    strcpy(transactions[currentTransactionId].showtime, showtime.time);
+
     getCurrentDateTime(transactions[currentTransactionId].transactionDate);
     calculateExpiryTime(transactions[currentTransactionId].expiryTime);
     transactions[currentTransactionId].status = PENDING_PAYMENT;
     transactions[currentTransactionId].isActive = true;
 
-    transactionCount++;
+    strcpy(transactions[currentTransactionId].movieTitle, movie.title);
+    strcpy(transactions[currentTransactionId].showtime, showtime.time);
+
+    // Initialize booking code dan passkey
+    strcpy(transactions[currentTransactionId].bookingCode, "");
+    strcpy(transactions[currentTransactionId].passkey, "");
 
     // Reserve kursi dengan status pending
     reserveSeats(validSeats, seatCount, showtime.auditorium,
@@ -680,6 +715,7 @@ void processTicketBooking(int movieIndex, int showtimeIndex) {
 
     // Tampilkan ringkasan dan lanjut ke pembayaran
     processPayment(currentTransactionId);
+    transactionCount++;
 }
 
 // Fungsi untuk menampilkan konfirmasi tiket
@@ -717,10 +753,303 @@ void showTicketConfirmation(int transactionId) {
     pauseScreen();
 }
 
+// Fungsi untuk generate kode booking random
+void generateBookingCode(char *bookingCode) {
+    const char chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    for (int i = 0; i < 8; i++) {
+        bookingCode[i] = chars[rand() % 36];
+    }
+    bookingCode[8] = '\0';
+}
+
+// Fungsi untuk generate passkey random
+void generatePasskey(char *passkey) {
+    for (int i = 0; i < 6; i++) {
+        passkey[i] = '0' + (rand() % 10);
+    }
+    passkey[6] = '\0';
+}
+
+// Fungsi untuk mendeteksi jenis kartu
+const char *detectCardType(const char *cardNumber) {
+    char cleanNumber[20];
+    int cleanIndex = 0;
+
+    // Remove spaces and non-digits
+    for (int i = 0; cardNumber[i]; i++) {
+        if (isdigit(cardNumber[i])) {
+            cleanNumber[cleanIndex++] = cardNumber[i];
+        }
+    }
+    cleanNumber[cleanIndex] = '\0';
+
+    if (strlen(cleanNumber) != 16)
+        return "Unknown";
+
+    // Visa: starts with 4
+    if (cleanNumber[0] == '4')
+        return "Visa";
+
+    // Mastercard: starts with 5 or 2221-2720
+    if (cleanNumber[0] == '5')
+        return "Mastercard";
+    if (cleanNumber[0] == '2' && cleanNumber[1] == '2') {
+        int prefix = (cleanNumber[2] - '0') * 10 + (cleanNumber[3] - '0');
+        if (prefix >= 21 && prefix <= 72)
+            return "Mastercard";
+    }
+
+    return "Unknown";
+}
+
+// Fungsi untuk validasi kartu kredit
+bool validateCard(const char *cardNumber, const char *expiry, const char *cvv) {
+    // Validasi nomor kartu (16 digit)
+    char cleanNumber[20];
+    int cleanIndex = 0;
+
+    for (int i = 0; cardNumber[i]; i++) {
+        if (isdigit(cardNumber[i])) {
+            cleanNumber[cleanIndex++] = cardNumber[i];
+        }
+    }
+    cleanNumber[cleanIndex] = '\0';
+
+    if (strlen(cleanNumber) != 16) {
+        cout << "\nNomor kartu harus 16 digit!" << endl;
+        return false;
+    }
+
+    // Validasi masa berlaku (MM/YY)
+    if (strlen(expiry) != 5 || expiry[2] != '/') {
+        cout << "\nFormat masa berlaku salah! Gunakan MM/YY" << endl;
+        return false;
+    }
+
+    int month = (expiry[0] - '0') * 10 + (expiry[1] - '0');
+    int year = (expiry[3] - '0') * 10 + (expiry[4] - '0');
+
+    if (month < 1 || month > 12) {
+        cout << "\nBulan tidak valid! Harus antara 01-12" << endl;
+        return false;
+    }
+
+    time_t now = time(0);
+    tm *ltm = localtime(&now);
+
+    int currentYear = ltm->tm_year % 100; // 2025 -> 25
+    int currentMonth = ltm->tm_mon + 1;   // 0-11 -> 1-12
+
+    cout << "\n[INFO] Masa berlaku kartu: " << expiry << endl;
+    cout << "[INFO] Bulan/Tahun saat ini: " << setfill('0') << setw(2)
+         << currentMonth << "/20" << setw(2) << currentYear << endl;
+
+    // Cek apakah kartu sudah expired
+    if (year < currentYear || (year == currentYear && month < currentMonth)) {
+        cout << "\nKartu sudah kadaluarsa! Masa berlaku: " << expiry << endl;
+        cout << "Tahun saat ini: 20" << currentYear
+             << ", Bulan: " << currentMonth << endl;
+        return false;
+    }
+
+    // Validasi CVV (3 digit)
+    if (strlen(cvv) != 3) {
+        cout << "\nCVV harus 3 digit!" << endl;
+        return false;
+    }
+
+    for (int i = 0; i < 3; i++) {
+        if (!isdigit(cvv[i])) {
+            cout << "\nCVV harus berupa angka!" << endl;
+            return false;
+        }
+    }
+    cout << "\nValidasi berhasil! Kartu berlaku sampai " << expiry << endl;
+
+    return true;
+}
+
+// Fungsi untuk proses pembayaran kartu
+bool processCardPayment(int totalAmount, PaymentInfo *paymentInfo) {
+    clearScreen();
+    showHeader("PEMBAYARAN KARTU");
+
+    cout << "\nMetode pembayaran: Kartu (Debit/Kredit)" << endl;
+    cout << "\nTotal belanja        : Rp " << totalAmount << endl;
+    cout << "Biaya admin          : Rp 5.000" << endl;
+    cout << "-------------------------------" << endl;
+    cout << "Total yang harus dibayar: Rp " << (totalAmount + 5000) << endl;
+
+    char cardNumber[50];
+    char cardName[50];
+    char expiry[10];
+    char cvv[5];
+
+    cout << "\nMasukkan nomor kartu (16 digit): ";
+    cin.getline(cardNumber, 50);
+
+    cout << "Masukkan nama di kartu: ";
+    cin.getline(cardName, 50);
+
+    cout << "Masa berlaku (MM/YY): ";
+    cin.getline(expiry, 10);
+
+    cout << "Kode CVV (3 digit): ";
+    cin.getline(cvv, 5);
+
+    if (!validateCard(cardNumber, expiry, cvv)) {
+        pauseScreen();
+        return false;
+    }
+
+    const char *cardType = detectCardType(cardNumber);
+    cout << "\nJenis kartu terdeteksi: " << cardType << endl;
+
+    if (strcmp(cardType, "Unknown") == 0) {
+        cout << "\nJenis kartu tidak didukung! Hanya menerima Visa dan "
+                "Mastercard."
+             << endl;
+        pauseScreen();
+        return false;
+    }
+
+    cout << "\n[Konfirmasi pembayaran? 1. Ya  0. Batal]: ";
+    char confirm = getSingleInput();
+
+    if (confirm != '1') {
+        cout << "\nPembayaran dibatalkan." << endl;
+        pauseScreen();
+        return false;
+    }
+
+    // Simpan info pembayaran
+    paymentInfo->method = CARD_PAYMENT;
+    strcpy(paymentInfo->cardNumber, cardNumber);
+    strcpy(paymentInfo->cardName, cardName);
+    strcpy(paymentInfo->expiry, expiry);
+    strcpy(paymentInfo->cvv, cvv);
+
+    cout << "\nPembayaran sedang diproses..." << endl;
+    // Simulasi delay
+    for (int i = 0; i < 3; i++) {
+        cout << ".";
+        // Simple delay simulation
+        for (int j = 0; j < 100000000; j++)
+            ;
+    }
+    cout << endl;
+
+    cout << "Pembayaran berhasil!" << endl;
+    pauseScreen();
+    return true;
+}
+
+// Fungsi untuk proses pembayaran bank transfer
+bool processBankPayment(int totalAmount, PaymentInfo *paymentInfo) {
+    clearScreen();
+    showHeader("TRANSFER BANK");
+
+    cout << "\nPilih bank tujuan:" << endl;
+    cout << "1. BCA" << endl;
+    cout << "2. Mandiri" << endl;
+    cout << "3. BNI" << endl;
+    cout << "4. BRI" << endl;
+    cout << "0. Batal" << endl;
+    cout << "\nPilihan [0-4]: ";
+
+    char choice = getSingleInput();
+
+    const char *bankNames[] = {"", "BCA", "Mandiri", "BNI", "BRI"};
+    const char *accountNumbers[] = {"", "1234567890", "9876543210",
+                                    "1357924680", "2468013579"};
+
+    if (choice < '1' || choice > '4') {
+        if (choice == '0') {
+            cout << "\nTransfer dibatalkan." << endl;
+        } else {
+            cout << "\nPilihan tidak valid!" << endl;
+        }
+        pauseScreen();
+        return false;
+    }
+
+    int bankIndex = choice - '0';
+
+    cout << "\n=== INFORMASI TRANSFER ===" << endl;
+    cout << "Bank Tujuan    : " << bankNames[bankIndex] << endl;
+    cout << "No. Rekening   : " << accountNumbers[bankIndex] << endl;
+    cout << "Atas Nama     : MOVTIX INDONESIA" << endl;
+    cout << "Jumlah Transfer: Rp " << totalAmount << endl;
+    cout << "=========================" << endl;
+
+    cout << "\nSilakan lakukan transfer dan tekan 1 jika sudah selesai, 0 "
+            "untuk batal: ";
+    char confirm = getSingleInput();
+
+    if (confirm != '1') {
+        cout << "\nTransfer dibatalkan atau belum selesai." << endl;
+        pauseScreen();
+        return false;
+    }
+
+    // Simpan info pembayaran
+    paymentInfo->method = BANK_TRANSFER;
+    strcpy(paymentInfo->bankName, bankNames[bankIndex]);
+
+    cout << "\nTransfer berhasil dikonfirmasi!" << endl;
+    pauseScreen();
+    return true;
+}
+
+// Fungsi untuk proses pembayaran poin
+bool processPointsPayment(int totalAmount, PaymentInfo *paymentInfo) {
+    clearScreen();
+    showHeader("PEMBAYARAN POIN MOVTIX");
+
+    int userPoints = users[currentUserIndex].movtixPoints;
+    int requiredPoints = totalAmount / 100; // 1 poin = Rp 100
+
+    cout << "\nTotal pembayaran: Rp " << totalAmount << endl;
+    cout << "Poin dibutuhkan : " << requiredPoints << " poin" << endl;
+    cout << "Poin Anda       : " << userPoints << " poin" << endl;
+
+    if (userPoints < requiredPoints) {
+        cout << "\nMaaf, poin Anda tidak mencukupi!" << endl;
+        cout << "Kekurangan      : " << (requiredPoints - userPoints) << " poin"
+             << endl;
+        pauseScreen();
+        return false;
+    }
+
+    cout << "\nSisa poin setelah pembayaran: " << (userPoints - requiredPoints)
+         << " poin" << endl;
+    cout << "\n[Konfirmasi pembayaran dengan poin? 1. Ya  0. Batal]: ";
+
+    char confirm = getSingleInput();
+
+    if (confirm != '1') {
+        cout << "\nPembayaran dibatalkan." << endl;
+        pauseScreen();
+        return false;
+    }
+
+    // Kurangi poin user
+    users[currentUserIndex].movtixPoints -= requiredPoints;
+
+    // Simpan info pembayaran
+    paymentInfo->method = MOVTIX_POINTS;
+    paymentInfo->pointsUsed = requiredPoints;
+
+    cout << "\nPembayaran dengan poin berhasil!" << endl;
+    cout << "Poin tersisa: " << users[currentUserIndex].movtixPoints << " poin"
+         << endl;
+    pauseScreen();
+    return true;
+}
+
 // Fungsi untuk proses pembayaran
 void processPayment(int transactionId) {
     while (true) {
-        // Cek apakah transaksi sudah expired
         char currentTime[20];
         getCurrentDateTime(currentTime);
 
@@ -730,8 +1059,6 @@ void processPayment(int transactionId) {
             showHeader("WAKTU PEMBAYARAN HABIS");
             cout << "\nMaaf, waktu pembayaran telah habis!" << endl;
             cout << "Reservasi kursi Anda telah dibatalkan." << endl;
-
-            // Cancel reservation
             cancelReservation(transactionId);
             pauseScreen();
             return;
@@ -742,12 +1069,12 @@ void processPayment(int transactionId) {
 
         Transaction trans = transactions[transactionId];
 
-        cout << "\nKode Booking: MOVTIX" << setfill('0') << setw(4) << trans.id
-             << endl;
-        cout << "Film        : " << trans.movieTitle << endl;
-        cout << "Jadwal      : " << trans.showtime << endl;
-        cout << "Kursi       : " << trans.selectedSeats << endl;
-        cout << "Jumlah Tiket: " << trans.ticketCount << endl;
+        cout << "\nID Transaksi   : MOVTIX" << setfill('0') << setw(4)
+             << trans.id << endl;
+        cout << "Film           : " << trans.movieTitle << endl;
+        cout << "Jadwal         : " << trans.showtime << endl;
+        cout << "Kursi          : " << trans.selectedSeats << endl;
+        cout << "Jumlah Tiket   : " << trans.ticketCount << endl;
 
         if (trans.fnbCount > 0) {
             cout << "\nF&B yang dipesan:" << endl;
@@ -762,7 +1089,6 @@ void processPayment(int transactionId) {
         cout << "Batas Waktu     : " << trans.expiryTime << endl;
         cout << "Waktu Sekarang  : " << currentTime << endl;
 
-        // Hitung sisa waktu
         int timeDiff = compareDateTime(trans.expiryTime, currentTime);
         if (timeDiff > 0) {
             cout << "Status          : Masih dalam batas waktu" << endl;
@@ -779,28 +1105,112 @@ void processPayment(int transactionId) {
         char choice = getSingleInput();
 
         switch (choice) {
-        case '1':
-            // Proses pembayaran
-            clearScreen();
-            showHeader("PROSES PEMBAYARAN");
-            cout << "\nMemproses pembayaran..." << endl;
-            cout << "Pembayaran berhasil!" << endl;
+        case '1': {
+            // Menu pilih metode pembayaran
+            while (true) {
+                clearScreen();
+                showHeader("PILIH METODE PEMBAYARAN");
 
-            // Konfirmasi pembayaran
-            confirmPayment(transactionId);
+                cout << "\nTotal yang harus dibayar: Rp " << trans.totalPrice
+                     << endl;
+                cout << "\nPilih Metode Pembayaran:" << endl;
+                cout << "1. Transfer Bank" << endl;
+                cout << "2. Kartu (Debit/Kredit)" << endl;
+                cout << "3. Poin MovTix (Saldo: "
+                     << users[currentUserIndex].movtixPoints << " poin)"
+                     << endl;
+                cout << "0. Kembali ke menu pembayaran" << endl;
+                cout << "\n[Pilih 0-3]: ";
 
-            // Update popularitas
-            for (int i = 0; i < movieCount; i++) {
-                if (movies[i].id == trans.movieId) {
-                    movies[i].popularity += trans.ticketCount;
+                char paymentChoice = getSingleInput();
+                PaymentInfo paymentInfo = {};
+                bool paymentSuccess = false;
+
+                switch (paymentChoice) {
+                case '1':
+                    paymentSuccess =
+                        processBankPayment(trans.totalPrice, &paymentInfo);
                     break;
+                case '2':
+                    // Clear input buffer sebelum getline
+                    cin.clear();
+                    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+                    paymentSuccess =
+                        processCardPayment(trans.totalPrice, &paymentInfo);
+                    break;
+                case '3':
+                    paymentSuccess =
+                        processPointsPayment(trans.totalPrice, &paymentInfo);
+                    break;
+                case '0':
+                    break;
+                default:
+                    cout << "\nPilihan tidak valid!" << endl;
+                    pauseScreen();
+                    continue;
+                }
+
+                if (paymentChoice == '0')
+                    break;
+
+                if (paymentSuccess) {
+                    // Generate booking code dan passkey
+                    generateBookingCode(
+                        transactions[transactionId].bookingCode);
+                    generatePasskey(transactions[transactionId].passkey);
+
+                    // Simpan payment info
+                    transactions[transactionId].paymentInfo = paymentInfo;
+
+                    // Konfirmasi pembayaran
+                    confirmPayment(transactionId);
+
+                    // Berikan poin untuk transaksi yang berhasil (jika tidak
+                    // pakai poin)
+                    if (paymentInfo.method != MOVTIX_POINTS) {
+                        int earnedPoints =
+                            trans.totalPrice / 1000; // 1 poin per Rp 1000
+                        users[currentUserIndex].movtixPoints += earnedPoints;
+                    }
+
+                    // Update popularitas
+                    for (int i = 0; i < movieCount; i++) {
+                        if (movies[i].id == trans.movieId) {
+                            movies[i].popularity += trans.ticketCount;
+                            break;
+                        }
+                    }
+
+                    // Tampilkan konfirmasi dengan kode booking
+                    clearScreen();
+                    showHeader("PEMBAYARAN BERHASIL");
+
+                    cout << "\nPembayaran berhasil!" << endl;
+                    cout << "\nKode Booking : "
+                         << transactions[transactionId].bookingCode << endl;
+                    cout << "Passkey      : "
+                         << transactions[transactionId].passkey << endl;
+
+                    if (paymentInfo.method != MOVTIX_POINTS) {
+                        cout << "\nAnda mendapat " << (trans.totalPrice / 1000)
+                             << " poin MovTix!" << endl;
+                        cout << "Total poin   : "
+                             << users[currentUserIndex].movtixPoints << " poin"
+                             << endl;
+                    }
+
+                    cout << "\nSimpan kode booking & passkey untuk masuk "
+                            "studio dan klaim F&B."
+                         << endl;
+                    cout << "\n[Tekan ENTER untuk kembali ke menu utama.]"
+                         << endl;
+                    pauseScreen();
+
+                    return;
                 }
             }
-
-            // Tampilkan e-ticket
-            showTicketConfirmation(transactionId);
-            return;
-
+            break;
+        }
         case '2':
             cout << "\nReservasi kursi masih aktif sampai " << trans.expiryTime
                  << endl;
@@ -810,7 +1220,6 @@ void processPayment(int transactionId) {
             pauseScreen();
             return;
 
-        // FIX: Added curly braces to solve "crosses initialization" error
         case '3': {
             cout << "\nApakah Anda yakin ingin membatalkan pesanan? (Y/N): ";
             char confirm = getSingleInput();
@@ -822,7 +1231,6 @@ void processPayment(int transactionId) {
             }
             break;
         }
-
         default:
             cout << "\nPilihan tidak valid!" << endl;
             pauseScreen();
@@ -830,6 +1238,26 @@ void processPayment(int transactionId) {
         }
     }
 }
+
+// Update inisialisasi user dengan poin
+void initializeUsers() {
+    strcpy(users[0].nama, "Admin MOVTIX");
+    strcpy(users[0].username, "admin");
+    strcpy(users[0].email, "admin@movtix.com");
+    strcpy(users[0].password, "admin123");
+    users[0].movtixPoints = 10000;
+
+    strcpy(users[1].nama, "Reza Asriano Maulana");
+    strcpy(users[1].username, "reza");
+    strcpy(users[1].email, "reza@movtix.com");
+    strcpy(users[1].password, "reza");
+    users[1].movtixPoints = 5000;
+
+    users[0].isActive = true;
+    users[1].isActive = true;
+    userCount = 2;
+}
+
 // Fungsi untuk inisialisasi F&B
 void initializeFnB() {
     // Makanan
@@ -1632,6 +2060,12 @@ int getSingletDigit() {
     }
 }
 
+int getNumberInput() {
+    int number;
+    cin >> number;
+    return number;
+}
+
 // Fungsi untuk menangani menu daftar film
 void handleMovieListMenu() {
     char input;
@@ -1891,12 +2325,15 @@ void showTransactionDetail(int transactionIndex) {
 
     Transaction trans = transactions[transactionIndex];
 
-    cout << "\n==================== DETAIL TRANSAKSI ===================="
-         << endl;
-    cout << "Kode Booking   : MOVTIX" << setfill('0') << setw(4) << trans.id
+    cout << "ID Transaksi   : MOVTIX" << setfill('0') << setw(4) << trans.id
          << endl;
     cout << "Status         : " << getStatusString(trans.status) << endl;
     cout << "Tanggal Pesan  : " << trans.transactionDate << endl;
+
+    if (trans.status == PAID && strlen(trans.bookingCode) > 0) {
+        cout << "Kode Booking   : " << trans.bookingCode << endl;
+        cout << "Passkey        : " << trans.passkey << endl;
+    }
 
     if (trans.status == PENDING_PAYMENT) {
         cout << "Batas Bayar    : " << trans.expiryTime << endl;
@@ -1987,15 +2424,59 @@ void showTransactionDetail(int transactionIndex) {
         cout << "\n[Transaksi ini telah dibayar. E-Ticket dapat digunakan "
                 "untuk masuk bioskop]"
              << endl;
+
+        // Tampilkan informasi lengkap untuk transaksi yang sudah dibayar
+        cout << "\n=== INFORMASI PENUKARAN TIKET ===" << endl;
+        cout << "Kode Booking : " << trans.bookingCode << endl;
+        cout << "Passkey      : " << trans.passkey << endl;
+        cout << "Gunakan kode ini di Menu 5 untuk penukaran tiket dan F&B"
+             << endl;
+        cout << "=========================================" << endl;
+
         cout << "\nPilihan:" << endl;
         cout << "1. Tampilkan E-Ticket" << endl;
+        cout << "2. Salin Kode" << endl;
         cout << "0. Kembali" << endl;
-        cout << "\nPilihan Anda [0-1]: ";
+        cout << "\nPilihan Anda [0-2]: ";
 
         char choice = getSingleInput();
 
-        if (choice == '1') {
+        switch (choice) {
+        case '1':
             showTicketConfirmation(transactionIndex);
+            break;
+        case '2':
+            clearScreen();
+            showHeader("KODE UNTUK PENUKARAN TIKET");
+            cout << "\n=================== SIMPAN KODE INI ==================="
+                 << endl;
+            cout << "Kode Booking : " << trans.bookingCode << endl;
+            cout << "Passkey      : " << trans.passkey << endl;
+            cout << "Film         : " << trans.movieTitle << endl;
+            cout << "Jadwal       : " << trans.showtime << endl;
+            cout << "Auditorium   : " << trans.auditorium << endl;
+            cout << "Kursi        : " << trans.selectedSeats << endl;
+            if (trans.fnbCount > 0) {
+                cout << "\nF&B untuk diklaim di Menu 5:" << endl;
+                for (int i = 0; i < trans.fnbCount; i++) {
+                    printf("- %dx %s\n", trans.selectedFnB[i].quantity,
+                           trans.selectedFnB[i].name);
+                }
+            }
+            cout << "======================================================="
+                 << endl;
+            cout << "\nMasuk ke Menu Utama Nomor 5 dengan kode ini untuk "
+                    "penukaran tiket."
+                 << endl;
+            pauseScreen();
+            break;
+        case '0':
+            return;
+        default:
+            cout << "\nPilihan tidak valid!" << endl;
+            pauseScreen();
+            showTransactionDetail(transactionIndex);
+            break;
         }
     } else if (trans.status == EXPIRED) {
         cout << "\n[Transaksi ini telah kadaluarsa karena tidak dibayar dalam "
@@ -2200,22 +2681,8 @@ int main() {
     int choice;
     bool isLoggedIn = false;
 
-    // Inisialisasi data pengguna demo
-    strcpy(users[0].nama, "Admin MOVTIX");
-    strcpy(users[0].username, "admin");
-    strcpy(users[0].email, "admin@movtix.com");
-    strcpy(users[0].password, "admin123");
-
-    strcpy(users[1].nama, "Reza Asriano Maulana");
-    strcpy(users[1].username, "reza");
-    strcpy(users[1].email, "reza@movtix.com");
-    strcpy(users[1].password, "reza");
-
-    users[0].isActive = true;
-    users[1].isActive = true;
-    userCount = 2;
-
-    // Inisialisasi data film
+    // Inisialisasi data
+    initializeUsers();
     initializeMovies();
     initializeSeats();
     initializeFnB();
