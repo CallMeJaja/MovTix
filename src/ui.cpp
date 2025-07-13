@@ -56,7 +56,7 @@ void showMainMenu() {
     cout << "3. Pesan Tiket" << endl;
     cout << "4. Histori Transaksi" << endl;
     cout << "5. Penukaran Tiket & F&B" << endl;
-    cout << "6. Keluar / Logout" << endl;
+    cout << "6. Keluar" << endl;
     cout << "\nMasukkan pilihan [1-6]: ";
 }
 
@@ -507,10 +507,10 @@ void showTransactionHistory() {
 
     cout << "\nNama: " << users[currentUserIndex].nama << endl;
     cout << "\n| No | Tanggal   | Film         | Jadwal | Audi | Kursi   | "
-            "Status   | Total    |"
+            "Status    | Total    |"
          << endl;
     cout << "|----|-----------|--------------|--------|------|---------|-------"
-            "---|----------|"
+            "----|----------|"
          << endl;
 
     for (int i = 0; i < userTransactionCount; i++) {
@@ -538,7 +538,7 @@ void showTransactionHistory() {
             strcpy(shortSeats, trans.selectedSeats);
         }
 
-        printf("| %-2d | %-9s | %-12s | %-6s | %-4d | %-7s | %-8s | %-8d |\n",
+        printf("| %-2d | %-9s | %-12s | %-6s | %-4d | %-7s | %-9s | %-8d |\n",
                i + 1, shortDate, shortTitle, trans.showtime, trans.auditorium,
                shortSeats, getStatusString(trans.status), trans.totalPrice);
     }
@@ -727,6 +727,13 @@ void showTransactionDetail(int transactionIndex) {
     } else if (trans.status == CANCELLED) {
         cout << "\n[Transaksi ini telah dibatalkan]" << endl;
         pauseScreen();
+    } else if (trans.status == USED) {
+        cout << "\n[Transaksi ini telah digunakan untuk masuk bioskop]" << endl;
+        cout << "Kursi dan F&B sudah diklaim." << endl;
+        pauseScreen();
+    } else {
+        cout << "\nStatus transaksi tidak diketahui!" << endl;
+        pauseScreen();
     }
 }
 
@@ -739,6 +746,7 @@ void showTransactionSummary() {
     int unpaidTransactions = 0;
     int expiredTransactions = 0;
     int cancelledTransactions = 0;
+    int usedTransactions = 0;
     int totalSpent = 0;
     int totalTickets = 0;
 
@@ -762,34 +770,43 @@ void showTransactionSummary() {
             case CANCELLED:
                 cancelledTransactions++;
                 break;
+            case USED:
+                usedTransactions++;
+                totalSpent += transactions[i].totalPrice;
+                totalTickets += transactions[i].ticketCount;
+                break;
             }
         }
     }
 
-    cout << "\nNama: " << users[currentUserIndex].nama << endl;
-    cout << "\n==================== RINGKASAN AKTIVITAS ===================="
-         << endl;
-    cout << "Total Transaksi      : " << totalTransactions << " transaksi"
-         << endl;
-    cout << "Transaksi Berhasil   : " << paidTransactions << " transaksi"
-         << endl;
-    cout << "Menunggu Pembayaran  : " << unpaidTransactions << " transaksi"
-         << endl;
-    cout << "Transaksi Kadaluarsa : " << expiredTransactions << " transaksi"
-         << endl;
-    cout << "Transaksi Dibatalkan : " << cancelledTransactions << " transaksi"
-         << endl;
-    cout << "\n===================== STATISTIK PEMBELIAN ====================="
-         << endl;
-    cout << "Total Tiket Dibeli   : " << totalTickets << " tiket" << endl;
-    cout << "Total Pengeluaran    : Rp " << totalSpent << endl;
+    int successfulTransactions = paidTransactions + usedTransactions;
 
-    if (paidTransactions > 0) {
+    cout << "\nNama: " << users[currentUserIndex].nama << endl;
+    cout << "\n==================== RINGKASAN AKTIVITAS ==================="
+         << endl;
+    cout << "Total Transaksi            : " << totalTransactions << " transaksi"
+         << endl;
+    cout << "- Lunas (Belum Digunakan)  : " << paidTransactions << " transaksi"
+         << endl;
+    cout << "- Telah Digunakan          : " << usedTransactions << " transaksi"
+         << endl;
+    cout << "- Menunggu Pembayaran      : " << unpaidTransactions
+         << " transaksi" << endl;
+    cout << "- Kadaluarsa               : " << expiredTransactions
+         << " transaksi" << endl;
+    cout << "- Dibatalkan               : " << cancelledTransactions
+         << " transaksi" << endl;
+    cout << "\n===================== STATISTIK PEMBELIAN =================="
+         << endl;
+    cout << "Total Tiket Dibeli      : " << totalTickets << " tiket" << endl;
+    cout << "Total Pengeluaran       : Rp " << totalSpent << endl;
+
+    if (successfulTransactions > 0) {
         cout << "Rata-rata per Transaksi : Rp "
-             << (totalSpent / paidTransactions) << endl;
+             << (totalSpent / successfulTransactions) << endl;
     }
 
-    cout << "============================================================="
+    cout << "============================================================"
          << endl;
 
     pauseScreen();

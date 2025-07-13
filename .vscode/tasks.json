@@ -2,11 +2,38 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "type": "shell",
+      "label": "kill-process",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "tasklist | findstr /i MovTix.exe && taskkill /F /IM MovTix.exe || echo MovTix.exe is not running"
+      ],
+      "problemMatcher": []
+    },
+    {
       "type": "cmake",
-      "label": "CMake: clean",
-      "command": "clean",
+      "label": "CMake: build",
+      "command": "build",
+      "dependsOn": "kill-process",
+      "targets": ["all"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
       "problemMatcher": [],
-      "detail": "CMake template clean task"
+      "detail": "CMake template build task"
+    },
+    {
+      "type": "shell",
+      "label": "Run Program",
+      "command": "cls && ${workspaceFolder}/run.bat",
+      "dependsOn": "CMake: build",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
     }
   ]
 }
