@@ -350,7 +350,3 @@ Aplikasi MOVTIX telah memenuhi aspek utama sistem tiket bioskop modern, dengan p
 Saran pengembangan: integrasi notifikasi, pembayaran digital lebih banyak, serta fitur promo & membership.
 
 ---
-
-**Catatan:**
-
-- Semua teks, output, dan tabel dapat disesuaikan lebih lanjut sesuai kebutuhan UI/UX pada implementasi C++ atau platform lain.
