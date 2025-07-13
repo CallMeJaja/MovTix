@@ -9,6 +9,8 @@
 
 using namespace std;
 
+const int RUPIAH_PER_POINT = 1000; // 1 poin = Rp 1000
+
 void initializeSeats() {
     // Inisialisasi kursi untuk auditorium 1 (80 kursi: A-J, 1-8)
     int seatIndex = 0;
@@ -576,7 +578,8 @@ void processPayment(int transactionId) {
                     // pakai poin)
                     if (paymentInfo.method != MOVTIX_POINTS) {
                         int earnedPoints =
-                            trans.totalPrice / 1000; // 1 poin per Rp 1000
+                            trans.totalPrice /
+                            RUPIAH_PER_POINT; // 1 poin per Rp 1000
                         users[currentUserIndex].movtixPoints += earnedPoints;
                     }
 
@@ -781,7 +784,7 @@ bool processPointsPayment(int totalAmount, PaymentInfo *paymentInfo) {
     showHeader("PEMBAYARAN POIN MOVTIX");
 
     int userPoints = users[currentUserIndex].movtixPoints;
-    int requiredPoints = totalAmount / 100; // 1 poin = Rp 100
+    int requiredPoints = totalAmount / RUPIAH_PER_POINT; // 1 poin = Rp 1000
 
     cout << "\nTotal pembayaran: Rp " << totalAmount << endl;
     cout << "Poin dibutuhkan : " << requiredPoints << " poin" << endl;
